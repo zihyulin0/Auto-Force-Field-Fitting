@@ -4,100 +4,69 @@ from model.atomtypes import AtomType
 from utilities.PeriodictTable import Tables
 from utilities.Excpetions import TAFFIException
 from copy import deepcopy
+import numpy as np
 from utilities.writers import write_xyz
+from types import SimpleNamespace
+import random
 
 class MoleculeException(TAFFIException):
     pass
 
-class Molecule(StructureBase):
+class Molecule(AtomType):
     """
     whenever elements, geometry, q_tot being set, it will change that in Molecule, AdjMat, Atomtypes
     but when adj_mat or AdjMat changes, need to manually update that in Atomtypes
     """
     def __init__(self, gens):
-        super().__init__()
-        self.gens = gens
-        # just the place holder here, since atomtypes would require a build adjmat
-        self.AdjMat = AdjacencyMatrix()
-        self.AtomType = AtomType(self.gens)
+        super().__init__(gens)
         self.bond_mat = None
         self.hash_list = None
         self.fc = None
         # model compound use only,
         # TODO we might need to think about whether to have an class for frac or model molecule
         self.mc_prop = {}
+        # more to be added
+        self.bonds = None
+        self.bond_types = None
+        self.angles = None
+        self.angle_types = None
+        self.dihedrals = None
+        self.dihedral_types = None
+        self.onefives = None
+        self.onefive_types = None
+
         # internal use only
         self._lone_electrons = None
         self._core_electrons = None
         self._bonding_electrons = None
 
-    @StructureBase.elements.setter
-    def elements(self, value):
-        self.AdjMat.elements = value
-        self.AtomType.elements = value
-        super(Molecule, Molecule).elements.__set__(self, value)
-    @StructureBase.geometry.setter
-    def geometry(self, value):
-        self.AdjMat.geometry = value
-        self.AtomType.geometry = value
-        super(Molecule, Molecule).geometry.__set__(self, value)
 
-    @StructureBase.q_tot.setter
-    def q_tot(self, value):
-        self.AdjMat.q_tot = value
-        self.AtomType.q_tot = value
-        super(Molecule, Molecule).q_tot.__set__(self, value)
-
-    @property
-    def adj_mat(self):
-        return self.AdjMat.adj_mat
-
-    @property
-    def atom_types(self):
-        return self.AtomType.atom_types
 
     def parse_data(self, **kwargs):
-        elements = kwargs.get('elements', None)
-        geometry = kwargs.get('geometry', None)
-        q_tot = kwargs.get('q_tot', None)
-        bond_mat = kwargs.get('bond_mat', None)
-        atom_types = kwargs.get('atom_types', None)
-        adj_mat = kwargs.get('adj_mat', None)
-        hash_list = kwargs.get('hash_list', None)
+        attributes = ['elements', 'geometry', 'q_tot', 'bond_mat', 'atom_types', 'adj_mat', 'hash_list',
+                      'bonds', 'angles', 'dihedrals', 'onefives', 'bond_types', 'angle_types', 'dihedral_types',
+                      'onefive_types']
 
-        if elements is not None:
-            self.elements = elements
-        if geometry is not None:
-            self.geometry = geometry
-        if q_tot is not None:
-            self.q_tot = q_tot
-        if bond_mat is not None:
-            self.bond_mat = bond_mat
-        if hash_list is not None:
-            self.hash_list = hash_list
-        if atom_types is not None:
-            self.AtomType.atom_types = atom_types
-        if adj_mat is not None:
-            self.AdjMat.adj_mat = adj_mat
-            self.AtomType.parse_data_from_AdjMat(self.AdjMat)
+        for attribute in attributes:
+            value = kwargs.get(attribute, None)
+            if value is not None:
+                setattr(self, attribute, value)
 
-
-    def get_atom_types_pipe(self, xyz, method):
+    def get_atom_types_from_xyz_pipe(self, xyz, method):
         """
         A sophisticate pipeline to get atom types starting from reading xyz and does canonicalization
         """
         # parse geometry to molecule
         self.parse_from_xyz(xyz)
         # build adj_mat
-        self.AdjMat.build_adj_mat()
-        self.AtomType.parse_data_from_AdjMat(self.AdjMat)
+        self.build_adj_mat()
         if method == 'complicate':
             # involves canoicalize and formal charge
             # canonicalize the geometry
             self.canon_geo()
             self.update_atomtypes_extra()
         elif method == 'simple':
-            self.AtomType.UpdateAtomTypes()
+            self.UpdateAtomTypes()
         else:
             raise MoleculeException('specified pipeline {} to generate atomtypes does not exist'.format(method))
 
@@ -106,7 +75,7 @@ class Molecule(StructureBase):
         get bonding matrix and formal charge
         """
         self._lone_electrons, self._bonding_electrons, self._core_electrons, self.bond_mat, self.fc = \
-            self.AdjMat.find_lewis(return_pref=False, verbose=False, return_FC=True)
+            self._AdjMat.find_lewis(return_pref=False, verbose=False, return_FC=True)
 
     def update_atomtypes_extra(self):
         """
@@ -116,13 +85,81 @@ class Molecule(StructureBase):
             self.update_bondmat_fc()
 
         # find radicals for atom type assignment
-        keep_lones = [[count_j for count_j, j in enumerate(self._lone_electron) if j % 2 != 0] for self._lone_electron in
+        keep_lones = [[count_j for count_j, j in enumerate(self._lone_electrons) if j % 2 != 0] for self._lone_electron in
                       self._lone_electrons]
         # finally determine atom types
-        self.AtomType.UpdateAtomTypes(fc=self.fc, keep_lone=keep_lones, return_index=False)
+        self.UpdateAtomTypes(fc=self.fc, keep_lone=keep_lones, return_index=False)
 
     def write_xyz(self, file_prefix):
         write_xyz(file_prefix, self.elements, self.geometry, additional_col=self.atom_types)
+
+    def mol_write(self, name, elements, geo, adj_mat, append_opt=False):
+        """
+        # Description: Simple wrapper function for writing a mol (V2000) file
+        #
+        # Inputs      name:     string holding the filename of the output
+        #             elements: list of element types (list of strings)
+        #             geo:      Nx3 array holding the cartesian coordinates of the
+        #                       geometry (atoms are indexed to the elements in Elements)
+        #             adj_mat:  NxN array holding the molecular graph
+        :returns: file name
+        """
+        # Consistency check
+        if len(elements) >= 1000:
+            raise MoleculeException("ERROR in mol_write: the V2000 format can only accomodate up to 1000 atoms per molecule.")
+
+            # Check for append vs overwrite condition
+        if append_opt == True:
+            open_cond = 'a'
+        else:
+            open_cond = 'w'
+
+        # Parse the basename for the mol header
+        base_name = name.split(".")
+        if len(base_name) > 1:
+            base_name = ".".join(base_name[:-1])
+        else:
+            base_name = base_name[0]
+
+        # Get the bond orders
+        if self.bond_mat is None:
+            self.get_bond_mat()
+
+        # Write the file
+        with open(name, open_cond) as f:
+
+            # Write the header
+            f.write('{}\nGenerated by mol_write.py\n\n'.format(base_name))
+
+            # Write the number of atoms and bonds
+            f.write("{:>3d}{:>3d}  0  0  0  0  0  0  0  0  1 V2000\n".format(len(elements), int(np.sum(adj_mat / 2.0))))
+
+            # Write the geometry
+            for count_i, i in enumerate(elements):
+                f.write(
+                    " {:> 9.4f} {:> 9.4f} {:> 9.4f} {:<3s} 0  0  0  0  0  0  0  0  0  0  0  0\n".format(geo[count_i][0],
+                                                                                                        geo[count_i][1],
+                                                                                                        geo[count_i][2],
+                                                                                                        i))
+
+            # Write the bonds
+            bonds = [(count_i, count_j) for count_i, i in enumerate(adj_mat) for count_j, j in enumerate(i) if
+                     j == 1 and count_j > count_i]
+            for i in bonds:
+                # Calculate bond order from the bond_mat
+                bond_order = int(self.bond_mat[i[0], i[1]])
+
+                #             if hybridizations[i[0]] == "sp2" and hybridizations[i[1]] == "sp2":
+                #                 bond_order = 2
+                #             elif hybridizations[i[0]] == "sp" and hybridizations[i[1]] == "sp":
+                #                 bond_order = 3
+                #             else:
+                #                 bond_order = 1
+
+                f.write("{:>3d}{:>3d}{:>3d}  0  0  0  0\n".format(i[0] + 1, i[1] + 1, bond_order))
+            f.write("M  END\n$$$$\n")
+
+        return
 
     def canon_geo(self):
         """
@@ -136,29 +173,30 @@ class Molecule(StructureBase):
         # Canonicalize by sorting the elements based on hashing
         masses = [Tables.MASSDICT[i] for i in self.elements]
         hash_list, atoms = [list(j) for j in
-                            zip(*sorted([(self.AtomType.atom_hash(i, masses), i) for i in range(len(self.geometry))], reverse=True))]
+                            zip(*sorted([(self.atom_hash(i, masses), i) for i in range(len(self.geometry))], reverse=True))]
 
         # Update lists/arrays based on atoms
-        self.geometry = self.geometry[atoms]
-        self.elements = [self.elements[i] for i in atoms]
+        self.geometry = self._geometry[atoms]
+        self.elements = [self._elements[i] for i in atoms]
         # update adj_mat
-        self.AdjMat._adj_mat = self.AdjMat._adj_mat[atoms]
-        self.AdjMat._adj_mat = self.AdjMat._adj_mat[:, atoms]
-        self.AtomType.parse_data_from_AdjMat(self.AdjMat)
+        self._AdjMat._adj_mat = self._AdjMat._adj_mat[atoms]
+        self._AdjMat._adj_mat = self._AdjMat._adj_mat[:, atoms]
         # update atom_types (at this point, it's probably still just an empty list
-        self.AtomType.atom_types = [self.AtomType.atom_types[i] for i in atoms]
+        self.atom_types = [self.atom_types[i] for i in atoms]
 
 
     def find_modes(self, return_all=0, d1_opt=False):
-        # A wrapper for the commands to parse the dihedrals from the adjacency matrix and geometry.
-        #           Atom_types isn't necessary here, this section of code just hasn't been cleaned up.
-        # Returns:  list of (dihedral_type,angle) tuples.
+        """
+        A wrapper for the commands to parse the dihedrals from the adjacency matrix and geometry.
+                  Atom_types isn't necessary here, this section of code just hasn't been cleaned up.
+        Returns:  list of (dihedral_type,angle) tuples.
 
 
-        # Initialize lists of each instance and type of FF object.
-        # instances are stored as tuples of the atoms involved
-        # (e.g., bonds between atoms 1 and 13 and 17 and 5 would be stored as [(1,13),(17,5)]
-        # Similarly, types are stored as tuples of atom types.
+        Initialize lists of each instance and type of FF object.
+        instances are stored as tuples of the atoms involved
+        (e.g., bonds between atoms 1 and 13 and 17 and 5 would be stored as [(1,13),(17,5)]
+        Similarly, types are stored as tuples of atom types.
+        """
         Atom_types = deepcopy(self.atom_types)
         Atom_types = [next(j for j in i.split('link-') if j != '') for i in
                       Atom_types]  # split('-link') call is necessary for handling fragment atoms
@@ -248,11 +286,297 @@ class Molecule(StructureBase):
                           i in One_fives]
 
         if return_all == 1:
-            return Bonds, Angles, Dihedrals, One_fives, Bond_types, Angle_types, Dihedral_types, One_five_types
+            self.parse_data(bonds=Bonds, angles=Angles, dihedrals=Dihedrals, onefives=One_fives,
+                            bond_types=Bond_types, angle_types=Angle_types, dihdral_types=Dihedral_types,
+                            onefive_types=One_five_types)
         else:
-            return Bonds, Angles, Dihedrals, One_fives
+            self.parse_data(bonds=Bonds, angles=Angles, dihedrals=Dihedrals, onefives=One_fives)
 
-# TODO need to think about where these canon functions should live in
+
+    def get_bond_mat(self, verbose=False):
+        """
+        Returns an NxN matrix holding the bond orders between all atoms in the molecular structure.
+        :returns:  bond_mat:  an NxN matrix holding the bond orders between all atoms in the adj_mat
+        """
+
+        # Initialize the saturation dictionary the first time this function is called
+        get_bond_mat_dict = SimpleNamespace()
+        get_bond_mat_dict.sat_dict = Tables.SATURATION
+        get_bond_mat_dict.periodic = Tables.PERIODICT
+        get_bond_mat_dict.lone_e = Tables.LONE_ELETRON
+        get_bond_mat_dict.atomic_to_element = {get_bond_mat_dict.periodic[i]: i for i in get_bond_mat_dict.periodic.keys()}
+
+        # Initalize atomic_number lists for use by the function
+        atomic_number = [get_bond_mat_dict.periodic[i.lower()] for i in self.elements]
+
+        # Generate the bonding preference to optimally satisfy the valency conditions of each atom
+        bonding_pref = [(count_i, get_bond_mat_dict.sat_dict[i]) for count_i, i in enumerate(self.elements)]
+
+        # Convert to atomic numbers is working in elements mode
+        atomtypes = ["[" + str(get_bond_mat_dict.periodic[i.lower()]) + "]" for i in self.elements]
+
+        # Initially assign all valence electrons as lone electrons
+        lone_electrons = np.zeros(len(atomtypes), dtype="int")
+        bonding_electrons = np.zeros(len(atomtypes), dtype="int")
+        core_electrons = np.zeros(len(atomtypes), dtype="int")
+        valence = np.zeros(len(atomtypes), dtype="int")
+        bonding_target = np.zeros(len(atomtypes), dtype="int")
+        for count_i, i in enumerate(atomtypes):
+
+            # Grab the total number of (expected) electrons from the atomic number
+            N_tot = int(i.split('[')[1].split(']')[0])
+
+            # Determine the number of core/valence electrons based on row in the periodic table
+            if N_tot > 54:
+                raise MoleculeException("ERROR in get_bonds: the algorithm isn't compatible with atomic numbers "
+                                        "greater than 54 owing to a lack of rules for treating lanthanides. Exiting...")
+            elif N_tot > 36:
+                N_tot -= 36
+                core_electrons[count_i] = 36
+                valence[count_i] = 18
+            elif N_tot > 18:
+                N_tot -= 18
+                core_electrons[count_i] = 18
+                valence[count_i] = 18
+            elif N_tot > 10:
+                N_tot -= 10
+                core_electrons[count_i] = 10
+                valence[count_i] = 8
+            elif N_tot > 2:
+                N_tot -= 2
+                core_electrons[count_i] = 2
+                valence[count_i] = 8
+            lone_electrons[count_i] = N_tot
+            bonding_target[count_i] = N_tot - get_bond_mat_dict.lone_e[
+                get_bond_mat_dict.atomic_to_element[int(i.split('[')[1].split(']')[0])]]
+
+            # Loop over the adjmat and assign initial bonded electrons assuming single bonds (and adjust lone electrons accordingly)
+        for count_i, i in enumerate(self.adj_mat):
+            bonding_electrons[count_i] += sum(i)
+            lone_electrons[count_i] -= sum(i)
+
+        # Eliminate all radicals by forming higher order bonds
+        change_list = range(len(lone_electrons))
+        outer_counter = 0
+        inner_max_cycles = 1000
+        outer_max_cycles = 1000
+        loop_list = [(atomic_number[i], i) for i in range(len(lone_electrons))]
+        loop_list = [i[1] for i in sorted(loop_list)]
+        bonds_made = []
+        bond_sat = False
+
+        # Check for special chemical groups
+        for i in range(len(atomtypes)):
+
+            # Handle nitro groups
+            if self.is_nitro(i) is True:
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["o", "O"] and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[0] not in O_ind]
+                bonding_pref += [(i, 4)]
+                bonding_pref += [(O_ind[0], 1)]
+                bonding_pref += [(O_ind[1], 2)]
+                bonding_electrons[O_ind[1]] += 1
+                bonding_electrons[i] += 1
+                lone_electrons[O_ind[1]] -= 1
+                lone_electrons[i] -= 2
+                lone_electrons[O_ind[0]] += 1
+                bonds_made += [(i, O_ind[1])]
+
+            # Handle sulfoxide groups
+            if self.is_sulfoxide(i) is True:
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["o", "O"] and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the sulfoxide atoms from the bonding_pref list
+                bonding_pref += [(i, 4)]
+                bonding_pref += [(O_ind[0], 2)]
+                bonding_electrons[O_ind[0]] += 1
+                bonding_electrons[i] += 1
+                lone_electrons[O_ind[0]] -= 1
+                lone_electrons[i] -= 1
+                bonds_made += [(i, O_ind[0])]
+
+            # Handle sulfonyl groups
+            if self.is_sulfonyl(i) is True:
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["o", "O"] and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the sulfonyl atoms from the bonding_pref list
+                bonding_pref += [(i, 6)]
+                bonding_pref += [(O_ind[0], 2)]
+                bonding_pref += [(O_ind[1], 2)]
+                bonding_electrons[O_ind[0]] += 1
+                bonding_electrons[O_ind[1]] += 1
+                bonding_electrons[i] += 2
+                lone_electrons[O_ind[0]] -= 1
+                lone_electrons[O_ind[1]] -= 1
+                lone_electrons[i] -= 2
+                bonds_made += [(i, O_ind[0])]
+                bonds_made += [(i, O_ind[1])]
+
+            # Handle phosphate groups
+            if self.is_phosphate(i) is True:
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["o", "O"]]  # Index of single bonded O-P oxygens
+                O_ind_term = [j for j in O_ind if sum(self.adj_mat[j]) == 1]  # Index of double bonded O-P oxygens
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the phosphate atoms from the bonding_pref list
+                bonding_pref += [(i, 5)]
+                bonding_pref += [(O_ind_term[0],
+                                  2)]  # during testing it ended up being important to only add a bonding_pref tuple for one of the terminal oxygens
+                bonding_electrons[O_ind_term[0]] += 1
+                bonding_electrons[i] += 1
+                lone_electrons[O_ind_term[0]] -= 1
+                lone_electrons[i] -= 1
+                bonds_made += [(i, O_ind_term[0])]
+
+        # diagnostic print
+        if verbose is True:
+            print("Starting electronic structure:")
+            print("\n{:40s} {:60} {:20} {:20} {:20} {}".format("elements", "atomtypes", "lone_electrons",
+                                                               "bonding_electrons", "core_electrons", "bonded_atoms"))
+            for count_i, i in enumerate(atomtypes):
+                print("{:40s} {:60} {:<20d} {:<20d} {:<20d} {}".format(self.elements[count_i], i, lone_electrons[count_i],
+                                                                       bonding_electrons[count_i],
+                                                                       core_electrons[count_i], ",".join(
+                        ["{}".format(count_j) for count_j, j in enumerate(self.adj_mat[count_i]) if j == 1])))
+
+        # The outer loop checks each bonding structure produced by the inner loop for consistency with
+        # the user specified "pref_bonding" and pref_argument with bonding electrons are
+        while bond_sat is False:
+
+            # Initialize necessary objects
+            change_list = range(len(lone_electrons))
+            inner_counter = 0
+            bond_sat = True
+            random.shuffle(loop_list)
+
+            # Inner loop forms bonds to remove radicals or underbonded atoms until no further
+            # changes in the bonding pattern are observed.
+            while len(change_list) > 0:
+                change_list = []
+                for i in loop_list:
+
+                    # List of atoms that already have a satisfactory binding configuration.
+                    happy = [j[0] for j in bonding_pref if j[1] == bonding_electrons[j[0]]]
+
+                    # If the current atom already has its target configuration then no further action is taken
+                    if i in happy: continue
+
+                    # If there are no lone electrons then skip
+                    if lone_electrons[i] == 0: continue
+
+                    # Take action if this atom has a radical or an unsatifisied bonding condition
+                    if lone_electrons[i] % 2 != 0 or bonding_electrons[i] != bonding_target[i]:
+
+                        # Try to form a bond with a neighboring radical (valence +1/-1 check ensures that no improper 5-bonded atoms are formed)
+                        bonded_radicals = [(atomic_number[count_j], count_j) for count_j, j in enumerate(self.adj_mat[i]) if
+                                           j == 1 and lone_electrons[count_j] % 2 != 0 \
+                                           and 2 * (bonding_electrons[count_j] + 1) + (lone_electrons[count_j] - 1) <=
+                                           valence[count_j] and lone_electrons[
+                                               count_j] - 1 >= 0 and count_j not in happy]
+                        bonded_lonepairs = [(atomic_number[count_j], count_j) for count_j, j in enumerate(self.adj_mat[i]) if
+                                            j == 1 and lone_electrons[count_j] > 0 \
+                                            and 2 * (bonding_electrons[count_j] + 1) + (lone_electrons[count_j] - 1) <=
+                                            valence[count_j] and lone_electrons[
+                                                count_j] - 1 >= 0 and count_j not in happy]
+
+                        # Sort by atomic number (cheap way of sorting carbon before other atoms, should probably switch over to electronegativities)
+                        bonded_radicals = [j[1] for j in sorted(bonded_radicals)]
+                        bonded_lonepairs = [j[1] for j in sorted(bonded_lonepairs)]
+
+                        # Correcting radicals is attempted first
+                        if len(bonded_radicals) > 0:
+                            bonding_electrons[i] += 1
+                            bonding_electrons[bonded_radicals[0]] += 1
+                            lone_electrons[i] -= 1
+                            lone_electrons[bonded_radicals[0]] -= 1
+                            change_list += [i, bonded_radicals[0]]
+                            bonds_made += [(i, bonded_radicals[0])]
+
+                        # Else try to form a bond with a neighboring atom with spare lone electrons (valence check ensures that no improper 5-bonded atoms are formed)
+                        elif len(bonded_lonepairs) > 0:
+                            bonding_electrons[i] += 1
+                            bonding_electrons[bonded_lonepairs[0]] += 1
+                            lone_electrons[i] -= 1
+                            lone_electrons[bonded_lonepairs[0]] -= 1
+                            change_list += [i, bonded_lonepairs[0]]
+                            bonds_made += [(i, bonded_lonepairs[0])]
+
+                # Increment the counter and break if the maximum number of attempts have been made
+                inner_counter += 1
+                if inner_counter >= inner_max_cycles:
+                    print("WARNING: maximum attempts to establish a reasonable lewis-structure exceeded ({}).".format(
+                        inner_max_cycles))
+
+            # Check if the user specified preferred bond order has been achieved.
+            if bonding_pref is not None:
+                unhappy = [i[0] for i in bonding_pref if i[1] != bonding_electrons[i[0]]]
+                if len(unhappy) > 0:
+
+                    # Break the first bond involving one of the atoms bonded to the under/over coordinated atoms
+                    # NOTE: Added check since nitro-containing groups can lead to situations with no bonds being formed
+                    ind = set([unhappy[0]] + [count_i for count_i, i in enumerate(self.adj_mat[unhappy[0]]) if i == 1])
+
+                    # Check if a rearrangment is possible, break if none are available
+                    try:
+                        break_bond = next(i for i in bonds_made if i[0] in ind or i[1] in ind)
+                    except:
+                        print(
+                            "WARNING: no further bond rearrangments are possible and bonding_pref is still not satisfied.")
+                        break
+
+                    # Perform bond rearrangment
+                    bonding_electrons[break_bond[0]] -= 1
+                    lone_electrons[break_bond[0]] += 1
+                    bonding_electrons[break_bond[1]] -= 1
+                    lone_electrons[break_bond[1]] += 1
+
+                    # Remove the bond from the list and reorder loop_list so that the indices involved in the bond are put last
+                    bonds_made.remove(break_bond)
+                    loop_list.remove(break_bond[0])
+                    loop_list.remove(break_bond[1])
+                    loop_list += [break_bond[0], break_bond[1]]
+
+                    # Update the bond_sat flag
+                    bond_sat = False
+
+                # Increment the counter and break if the maximum number of attempts have been made
+                outer_counter += 1
+
+                # Periodically reorder the list to avoid some cyclical walks
+                if outer_counter % 100 == 0:
+                    loop_list = self.reorder_list(loop_list, atomic_number)
+
+                # Print diagnostic upon failure
+                if outer_counter >= outer_max_cycles:
+                    print("WARNING: maximum attempts to establish a lewis-structure consistent")
+                    print("         with the user supplied bonding preference has been exceeded ({}).".format(
+                        outer_max_cycles))
+                    break
+
+        # diagnostic print
+        if verbose is True:
+            print("\nFinal electronic structure:")
+            print("\n{:40s} {:60} {:20} {:20} {:20} {}".format("elements", "atomtypes", "lone_electrons",
+                                                               "bonding_electrons", "core_electrons", "bonded_atoms"))
+            for count_i, i in enumerate(atomtypes):
+                print("{:40s} {:60} {:<20d} {:<20d} {:<20d} {}".format(self.elements[count_i], i, lone_electrons[count_i],
+                                                                       bonding_electrons[count_i],
+                                                                       core_electrons[count_i], ",".join(
+                        ["{}".format(count_j) for count_j, j in enumerate(self.adj_mat[count_i]) if j == 1])))
+
+        # Create the bond matrix
+        bond_mat = self.adj_mat.copy()
+        for i in bonds_made:
+            bond_mat[i[0], i[1]] += 1
+            bond_mat[i[1], i[0]] += 1
+
+        return bond_mat
+
+
+    # TODO need to think about where these canon functions should live in
 def canon_bond(types, ind=None):
     """
     # Description: returns a canonicallized TAFFI bond. TAFFI bonds are written so that the lesser *atom_type* between 1 and 2 is first.
@@ -394,7 +718,7 @@ def remove_duplicate_modes(types, modes):
 
 def main():
     """
-    testing if the structure is passed down to all
+    quick testing if the structure is passed down to all
     """
     molecule = Molecule(2)
     molecule.parse_from_xyz('test.xyz')

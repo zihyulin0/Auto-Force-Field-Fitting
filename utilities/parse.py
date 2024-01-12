@@ -1,5 +1,5 @@
 import os, json, codecs
-from Excpetions import TAFFIException
+from utilities.Excpetions import TAFFIException
 import numpy as np
 
 class ReadingException(TAFFIException):
@@ -11,6 +11,20 @@ def read_alljson(jsonfile):
     obj_text = codecs.open(jsonfile, 'r').read()
     jload = json.loads(obj_text)
     return jload
+
+def read_whole_file(infile):
+    """
+    read the entire file's nonempty lines
+    """
+    store = []
+    with open(infile,'r') as f:
+        for lc,line in enumerate(f):
+            line = line.strip()  # Remove leading/trailing whitespace and newline characters
+            if not line:
+                continue  # Skip empty lines and lines starting with "#"
+            store.append(line)
+    return store
+
 def read_n_column(infile, n, skip_n=0):
     """
     read a file with n columns, this will skip any empty lines or line start with #

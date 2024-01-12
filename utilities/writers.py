@@ -1,6 +1,9 @@
 """
 Writer function for multiple file types
 """
+from utilities.Excpetions import TAFFIException
+class WritersException(TAFFIException):
+    pass
 
 def write_xyz(file_prefix, elements, geometry, additional_col=None):
     # Open file for writing and write header
@@ -40,3 +43,7 @@ def write_modelist(name,modes,bond_mat=[]):
                 f.write('{}\n'.format(" ".join([ "{:<60s}".format(modes[i]["atomtypes"][k][count_j]) for k in range(len(modes[i]["atomtypes"])) ])))
             f.write("{} end\n".format(modetype))
     return
+
+
+
+

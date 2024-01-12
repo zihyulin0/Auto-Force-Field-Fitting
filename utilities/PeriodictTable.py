@@ -134,7 +134,6 @@ class Tables():
                               "ru": 72.0, "rh": 66, "pd": 26.1, "ag": 55, "cd": 46.0, "in": 65.0, "sn": 53.0,
                               "sb": 43.0, "te": 28.0, "i": 32.9, "xe": 27.3, }
     @property
-
     def BOND_ENERGY(self):
         """
         Bond energy dictionary {}-{}-{} refers to atom1, atom2 additional bonds number (1 refers to double bonds)

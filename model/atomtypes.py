@@ -6,14 +6,24 @@ import numpy as np
 import random
 from copy import deepcopy
 from itertools import chain, combinations
+from types import SimpleNamespace
+import sys
 
 
 class AtomTypesException(TAFFIException):
     pass
 
+
 def type_adjmat(label):
     """
-    # This function generates a local adjacency matrix from an atomtype label
+    This function generates a local adjacency matrix from an atomtype label
+
+    :param label: one taffi atomtype
+    :type label: str
+
+    :returns:
+        *adj_mat* - local adjacency matrix
+        *labels* - elements from that atom type
     """
 
     # Initialize breaks (indices for brackets in "label"), atoms (start:end index tuples for the atom labels),
@@ -58,10 +68,11 @@ class AtomTypesBaseOperation(StructureBase):
     a lot of recursive functions, most of them can't be used without higher level wrapper
     """
 
-    def __init__(self):
+    def __init__(self, AdjMat=None):
         super().__init__()
-        self._AdjMat = None
-
+        self._AdjMat = AdjacencyMatrix()
+        if AdjMat is not None:
+            self._AdjMat = AdjMat
     @property
     def AdjMat(self):
         # this make sure it won't be empty when being called
@@ -74,12 +85,41 @@ class AtomTypesBaseOperation(StructureBase):
         if self._AdjMat is None:
             raise AtomTypesException('AdjMat not set, cannot retrieve its adj_mat')
         return self._AdjMat.adj_mat
+    @adj_mat.setter
+    def adj_mat(self, value):
+        self.adj_mat = value
+    @property
+    def graph_seps(self):
+        return self._AdjMat.graph_seps()
+
+    @StructureBase.elements.setter
+    def elements(self, value):
+        self._AdjMat.elements = value
+        super(AtomTypesBaseOperation, AtomTypesBaseOperation).elements.__set__(self, value)
+
+    @StructureBase.geometry.setter
+    def geometry(self, value):
+        self._AdjMat.geometry = value
+        super(AtomTypesBaseOperation, AtomTypesBaseOperation).geometry.__set__(self, value)
+
+    @StructureBase.q_tot.setter
+    def q_tot(self, value):
+        self._AdjMat.q_tot = value
+        super(AtomTypesBaseOperation, AtomTypesBaseOperation).q_tot.__set__(self, value)
 
     def parse_data_from_AdjMat(self, AdjMat):
+        self._AdjMat = AdjMat
         self.elements = AdjMat.elements
         self.geometry = AdjMat.geometry
         self.q_tot = AdjMat.q_tot
-        self._AdjMat = AdjMat
+
+    def build_adj_mat(self):
+        """
+        build only adj_mat, which means AdjMat should already be setup
+        """
+        if self._AdjMat is None:
+            raise AtomTypesException("AdjMatrix obj within Atomtype not yet build")
+        self._AdjMat.build_adj_mat()
 
     def taffi_type(self, ind, masses, gens=2, avoid=[], fc=[]):
         """
@@ -87,9 +127,13 @@ class AtomTypesBaseOperation(StructureBase):
         adjacency matrix based algorithm for identifying the taffi atom type
         the gens change within, so need to be an argument instead of a class member
 
-        :type ind: int
         :param ind: atom index
+        :type ind: int
 
+        :param masses: masses of the atoms
+        :type masses: list
+
+        :return: taffi_atom type
         """
 
         periodic = Tables.PERIODICT
@@ -136,6 +180,15 @@ class AtomTypesBaseOperation(StructureBase):
     def rec_sum(self, ind, M, beta, gens, avoid_list=[]):
         """
         recursive function for summing up the masses at each generation of connections.
+
+        :type ind: int
+        :param ind: index of the atom being hashed
+
+        :type M: list
+        :param M: masses of the atoms in the molecule
+
+        :type gens: int
+        :param gens: taffi_type depth
         """
         if gens != 0:
             tmp = M[ind] * beta
@@ -187,6 +240,15 @@ class AtomTypesBaseOperation(StructureBase):
     def rec_sum_list(self, ind, A, M, beta, gens, avoid_list=[]):
         """
         recursive function for summing up the masses at each generation of connections.
+
+        :param ind: atom index
+        :type ind: int
+
+        :param A: adjacency matrix
+        :type A: np matrix
+
+        :param M: masses
+        :type M: list
         """
         if gens != 0:
             tmp = M[ind] * beta
@@ -227,8 +289,10 @@ class AtomTypesBaseOperation(StructureBase):
                                       avoid=[idx]): return True
             return False
 
-    # Return bool depending on if the atom is a nitro nitrogen atom
     def is_nitro(self, i, alt_adj_mat=None):
+        """
+        Return bool depending on if the atom is a nitro nitrogen atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -244,8 +308,10 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
-    # Return bool depending on if the atom is a sulfoxide sulfur atom
     def is_sulfoxide(self, i, alt_adj_mat=None):
+        """
+        Return bool depending on if the atom is a sulfoxide sulfur atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -263,8 +329,10 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
-    # Return bool depending on if the atom is a sulfonyl sulfur atom
     def is_sulfonyl(self, i, alt_adj_mat=None):
+        """
+        Return bool depending on if the atom is a sulfonyl sulfur atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -282,8 +350,10 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
-    # Return bool depending on if the atom is a phosphate phosphorus atom
     def is_phosphate(self, i, alt_adj_mat=None):
+        """
+        Return bool depending on if the atom is a phosphate phosphorus atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -299,8 +369,10 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
-    # Return bool depending on if the atom is a cyano nitrogen atom
     def is_cyano(self, i, alt_adj_mat=None):
+        """
+         # Return bool depending on if the atom is a cyano nitrogen atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -340,9 +412,11 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
+    def is_frag_sulfoxide(self, i, alt_adj_mat=None):
+        """
     # is function for fragments
     # Return bool depending on if the atom is a sulfoxide sulfur atom
-    def is_frag_sulfoxide(self, i, alt_adj_mat=None):
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -360,8 +434,10 @@ class AtomTypesBaseOperation(StructureBase):
         else:
             return False
 
-    # Return bool depending on if the atom is a sulfonyl sulfur atom
     def is_frag_sulfonyl(self, i, alt_adj_mat=None):
+        """
+        # Return bool depending on if the atom is a sulfonyl sulfur atom
+        """
         if alt_adj_mat is not None:
             adj_mat = alt_adj_mat
         else:
@@ -580,9 +656,10 @@ class AtomType(AtomTypesBaseOperation):
         if return_index:
             return atom_types, bond_index
         else:
-            return atom_types        
-    def find_lewis(self, bonding_pref=[],q_tot=0,fixed_bonds=[],fc_0=None,keep_lone=[],return_pref=False,
-                   verbose=False,b_mat_only=False,return_FC=False,octet_opt=True,check_lewis_flag=False):
+            return atom_types
+
+    def find_lewis(self, bonding_pref=[], q_tot=0, fixed_bonds=[], fc_0=None, keep_lone=[], return_pref=False,
+                   verbose=False, b_mat_only=False, return_FC=False, octet_opt=True, check_lewis_flag=False):
         """
         # Returns a list with the number of electrons on each atom and a list with the number missing/surplus electrons on the atom
         #
@@ -604,46 +681,36 @@ class AtomType(AtomTypesBaseOperation):
         #          bonding_pref (optinal): optional list of (index, bond_number) tuples that sets the target bond number of the indexed atoms
         #
         """
-
-        # Initialize the preferred lone electron dictionary the first time this function is called
-        if not hasattr(find_lewis, "sat_dict"):
-
-            find_lewis.lone_e = Tables.LONE_ELETRON
-
-            # Initialize periodic table
-            find_lewis.periodic = Tables.PERIODICT
-            # Electronegativity ordering (for determining lewis structure)
-            find_lewis.en = Tables.ELETRONEGATIVITY
-
-            # Polarizability ordering (for determining lewis structure)
-            find_lewis.pol = Tables.POLARIZABILITY
-
-            # Bond energy dictionary
-            find_lewis.be =  Tables.BOND_ENERGY
-
-            # Initialize periodic table
-            find_lewis.atomic_to_element = { find_lewis.periodic[i]:i for i in find_lewis.periodic.keys() }
+        # keep the ability to place with these tables manually
+        find_lewis_dict = SimpleNamespace()
+        find_lewis_dict.lone_e = Tables.LONE_ELETRON
+        find_lewis_dict.periodic = Tables.PERIODICT
+        find_lewis_dict.en = Tables.ELETRONEGATIVITY
+        find_lewis_dict.pol = Tables.POLARIZABILITY
+        find_lewis_dict.be = Tables.BOND_ENERGY
+        find_lewis_dict.atomic_to_element = {find_lewis_dict.periodic[i]: i for i in find_lewis_dict.periodic.keys()}
 
         # Consistency check on fc_0 argument, if supplied
         if fc_0 is not None:
             if len(fc_0) != len(self.elements):
-                raise AtomTypesException("ERROR in find_lewis: the fc_0 and elements lists must have the same dimensions.")
+                raise AtomTypesException(
+                    "ERROR in find_lewis: the fc_0 and elements lists must have the same dimensions.")
             if int(sum(fc_0)) != int(q_tot):
                 raise AtomTypesException("ERROR in find_lewis: the sum of formal charges does not equal q_tot.")
 
         # Initalize elementa and atomic_number lists for use by the function
-        atomic_number = [ find_lewis.periodic[i.lower()] for i in self.elements ]
+        atomic_number = [find_lewis_dict.periodic[i.lower()] for i in self.elements]
         adj_mat = deepcopy(self.adj_mat)
 
         # Initially assign all valence electrons as lone electrons
-        lone_electrons    = np.zeros(len(self.elements),dtype="int")
-        bonding_electrons = np.zeros(len(self.elements),dtype="int")
-        core_electrons    = np.zeros(len(self.elements),dtype="int")
-        valence           = np.zeros(len(self.elements),dtype="int")
-        bonding_target    = np.zeros(len(self.elements),dtype="int")
-        valence_list      = np.zeros(len(self.elements),dtype="int")
+        lone_electrons = np.zeros(len(self.elements), dtype="int")
+        bonding_electrons = np.zeros(len(self.elements), dtype="int")
+        core_electrons = np.zeros(len(self.elements), dtype="int")
+        valence = np.zeros(len(self.elements), dtype="int")
+        bonding_target = np.zeros(len(self.elements), dtype="int")
+        valence_list = np.zeros(len(self.elements), dtype="int")
 
-        for count_i,i in enumerate(self.elements):
+        for count_i, i in enumerate(self.elements):
 
             # Grab the total number of (expected) electrons from the atomic number
             N_tot = atomic_number[count_i]
@@ -655,30 +722,30 @@ class AtomType(AtomTypesBaseOperation):
             elif N_tot > 36:
                 N_tot -= 36
                 core_electrons[count_i] = 36
-                valence[count_i]        = 18
+                valence[count_i] = 18
             elif N_tot > 18:
                 N_tot -= 18
                 core_electrons[count_i] = 18
-                valence[count_i]        = 18
+                valence[count_i] = 18
             elif N_tot > 10:
                 N_tot -= 10
                 core_electrons[count_i] = 10
-                valence[count_i]        = 8
+                valence[count_i] = 8
             elif N_tot > 2:
                 N_tot -= 2
                 core_electrons[count_i] = 2
-                valence[count_i]        = 8
+                valence[count_i] = 8
             lone_electrons[count_i] = N_tot
             valence_list[count_i] = N_tot
 
             # Assign target number of bonds for this atom
-            if count_i in [ j[0] for j in bonding_pref ]:
-                bonding_target[count_i] = next( j[1] for j in bonding_pref if j[0] == count_i )
+            if count_i in [j[0] for j in bonding_pref]:
+                bonding_target[count_i] = next(j[1] for j in bonding_pref if j[0] == count_i)
             else:
-                bonding_target[count_i] = N_tot - find_lewis.lone_e[self.elements[count_i].lower()]
+                bonding_target[count_i] = N_tot - find_lewis_dict.lone_e[self.elements[count_i].lower()]
 
         # Loop over the adjmat and assign initial bonded electrons assuming single bonds (and adjust lone electrons accordingly)
-        for count_i,i in enumerate(self.adj_mat):
+        for count_i, i in enumerate(self.adj_mat):
             bonding_electrons[count_i] += sum(i)
             lone_electrons[count_i] -= sum(i)
 
@@ -689,116 +756,126 @@ class AtomType(AtomTypesBaseOperation):
         # Eliminate all radicals by forming higher order bonds
         change_list = range(len(lone_electrons))
         bonds_made = []
-        loop_list   = [ (atomic_number[i],i) for i in range(len(lone_electrons)) ]
-        loop_list   = [ i[1] for i in sorted(loop_list) ]
+        loop_list = [(atomic_number[i], i) for i in range(len(lone_electrons))]
+        loop_list = [i[1] for i in sorted(loop_list)]
 
         # Check for special chemical groups
         for i in range(len(self.elements)):
             # Handle nitro groups
             if self.is_nitro(i) is True:
-                O_ind = [ count_j for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and
-                          self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1 ]
-                bonding_pref  = [ j for j in bonding_pref if j[0] != i and j[0] not in O_ind ]
-                bonding_pref += [(i,4)]
-                bonding_pref += [(O_ind[0],1)]
-                bonding_pref += [(O_ind[1],2)]
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if j == 1 and
+                         self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[0] not in O_ind]
+                bonding_pref += [(i, 4)]
+                bonding_pref += [(O_ind[0], 1)]
+                bonding_pref += [(O_ind[1], 2)]
                 bonding_electrons[O_ind[1]] += 1
                 bonding_electrons[i] += 1
                 lone_electrons[O_ind[1]] -= 1
                 lone_electrons[i] -= 2
                 lone_electrons[O_ind[0]] += 1
-                adj_mat[i,O_ind[1]] += 1
-                adj_mat[O_ind[1],i] += 1
+                adj_mat[i, O_ind[1]] += 1
+                adj_mat[O_ind[1], i] += 1
 
             # Handle sulfoxide groups
             if self.is_sulfoxide(i) is True:
-                O_ind = [ count_j for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1 ]
-                bonding_pref  = [ j for j in bonding_pref if j[0] != i and j[0] not in O_ind ] # remove bonds involving the thioketone atoms from the bonding_pref list
-                bonding_pref += [(i,4)]
-                bonding_pref += [(O_ind[0],2)]
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the thioketone atoms from the bonding_pref list
+                bonding_pref += [(i, 4)]
+                bonding_pref += [(O_ind[0], 2)]
                 bonding_electrons[O_ind[0]] += 1
                 bonding_electrons[i] += 1
                 lone_electrons[O_ind[0]] -= 1
                 lone_electrons[i] -= 1
-                bonds_made += [(i,O_ind[0])]
-                adj_mat[i,O_ind[0]] += 1
-                adj_mat[O_ind[0],i] += 1
+                bonds_made += [(i, O_ind[0])]
+                adj_mat[i, O_ind[0]] += 1
+                adj_mat[O_ind[0], i] += 1
 
             # Handle sulfonyl groups
             if self.is_sulfonyl(i) is True:
-
-                O_ind = [ count_j for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1 ]
-                bonding_pref = [ j for j in bonding_pref if j[0] != i and j[0] not in O_ind ] # remove bonds involving the sulfoxide atoms from the bonding_pref list
-                bonding_pref += [(i,6)]
-                bonding_pref += [(O_ind[0],2)]
-                bonding_pref += [(O_ind[1],2)]
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j].lower() == "o" and sum(self.adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the sulfoxide atoms from the bonding_pref list
+                bonding_pref += [(i, 6)]
+                bonding_pref += [(O_ind[0], 2)]
+                bonding_pref += [(O_ind[1], 2)]
                 bonding_electrons[O_ind[0]] += 1
                 bonding_electrons[O_ind[1]] += 1
                 bonding_electrons[i] += 2
                 lone_electrons[O_ind[0]] -= 1
                 lone_electrons[O_ind[1]] -= 1
                 lone_electrons[i] -= 2
-                bonds_made += [(i,O_ind[0])]
-                bonds_made += [(i,O_ind[1])]
-                adj_mat[i,O_ind[0]] += 1
-                adj_mat[i,O_ind[1]] += 1
-                adj_mat[O_ind[0],i] += 1
-                adj_mat[O_ind[1],i] += 1
+                bonds_made += [(i, O_ind[0])]
+                bonds_made += [(i, O_ind[1])]
+                adj_mat[i, O_ind[0]] += 1
+                adj_mat[i, O_ind[1]] += 1
+                adj_mat[O_ind[0], i] += 1
+                adj_mat[O_ind[1], i] += 1
 
             # Handle phosphate groups
             if self.is_phosphate(i) is True:
-                O_ind      = [ count_j for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and self.elements[count_j] in ["o","O"] ] # Index of single bonded O-P oxygens
-                O_ind_term = [ j for j in O_ind if sum(self.adj_mat[j]) == 1 ] # Index of double bonded O-P oxygens
-                bonding_pref = [ j for j in bonding_pref if j[0] != i and j[0] not in O_ind ] # remove bonds involving the phosphate atoms from the bonding_pref list
-                bonding_pref += [(i,5)]
-                bonding_pref += [(O_ind_term[0],2)]  # during testing it ended up being important to only add a bonding_pref tuple for one of the terminal oxygens
+                O_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["o", "O"]]  # Index of single bonded O-P oxygens
+                O_ind_term = [j for j in O_ind if sum(self.adj_mat[j]) == 1]  # Index of double bonded O-P oxygens
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in O_ind]  # remove bonds involving the phosphate atoms from the bonding_pref list
+                bonding_pref += [(i, 5)]
+                bonding_pref += [(O_ind_term[0],
+                                  2)]  # during testing it ended up being important to only add a bonding_pref tuple for one of the terminal oxygens
                 bonding_electrons[O_ind_term[0]] += 1
                 bonding_electrons[i] += 1
                 lone_electrons[O_ind_term[0]] -= 1
                 lone_electrons[i] -= 1
-                bonds_made += [(i,O_ind_term[0])]
-                adj_mat[i,O_ind_term[0]] += 1
-                adj_mat[O_ind_term[0],i] += 1
+                bonds_made += [(i, O_ind_term[0])]
+                adj_mat[i, O_ind_term[0]] += 1
+                adj_mat[O_ind_term[0], i] += 1
 
             # Handle cyano groups
             if self.is_cyano(i) is True:
-                C_ind = [ count_j for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and self.elements[count_j] in  ["c","C"] and sum(self.adj_mat[count_j]) == 2 ]
-                bonding_pref  = [ j for j in bonding_pref if j[0] != i and j[0] not in C_ind ] # remove bonds involving the cyano atoms from the bonding_pref list
-                bonding_pref += [(i,3)]
-                bonding_pref += [(C_ind[0],4)]
+                C_ind = [count_j for count_j, j in enumerate(self.adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["c", "C"] and sum(self.adj_mat[count_j]) == 2]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in C_ind]  # remove bonds involving the cyano atoms from the bonding_pref list
+                bonding_pref += [(i, 3)]
+                bonding_pref += [(C_ind[0], 4)]
                 bonding_electrons[C_ind[0]] += 2
                 bonding_electrons[i] += 2
                 lone_electrons[C_ind[0]] -= 2
                 lone_electrons[i] -= 2
-                bonds_made += [(i,C_ind[0])]
-                bonds_made += [(i,C_ind[0])]
-                adj_mat[i,C_ind[0]] += 2
-                adj_mat[C_ind[0],i] += 2
+                bonds_made += [(i, C_ind[0])]
+                bonds_made += [(i, C_ind[0])]
+                adj_mat[i, C_ind[0]] += 2
+                adj_mat[C_ind[0], i] += 2
 
             # Handle isocyano groups
             if self.is_isocyano(i, alt_adj_mat=adj_mat) is True:
-                C_ind = [ count_j for count_j,j in enumerate(adj_mat[i]) if j == 1 and self.elements[count_j] in  ["c","C"] and sum(adj_mat[count_j]) == 1 ]
-                bonding_pref  = [ j for j in bonding_pref if j[0] != i and j[0] not in C_ind ] # remove bonds involving the cyano atoms from the bonding_pref list
-                bonding_pref += [(i,4)]
-                bonding_pref += [(C_ind[0],3)]
+                C_ind = [count_j for count_j, j in enumerate(adj_mat[i]) if
+                         j == 1 and self.elements[count_j] in ["c", "C"] and sum(adj_mat[count_j]) == 1]
+                bonding_pref = [j for j in bonding_pref if j[0] != i and j[
+                    0] not in C_ind]  # remove bonds involving the cyano atoms from the bonding_pref list
+                bonding_pref += [(i, 4)]
+                bonding_pref += [(C_ind[0], 3)]
                 bonding_electrons[C_ind[0]] += 2
                 bonding_electrons[i] += 2
                 lone_electrons[C_ind[0]] -= 2
                 lone_electrons[i] -= 2
-                bonds_made += [(i,C_ind[0])]
-                bonds_made += [(i,C_ind[0])]
-                adj_mat[i,C_ind[0]] += 2
-                adj_mat[C_ind[0],i] += 2
+                bonds_made += [(i, C_ind[0])]
+                bonds_made += [(i, C_ind[0])]
+                adj_mat[i, C_ind[0]] += 2
+                adj_mat[C_ind[0], i] += 2
 
         # Apply fixed_bonds argument
-        off_limits=[]
+        off_limits = []
         for i in fixed_bonds:
 
             # Initalize intermediate variables
             a = i[0]
             b = i[1]
             N = i[2]
-            N_current = len([ j for j in bonds_made if (a,b) == j or (b,a) == j ]) + 1
+            N_current = len([j for j in bonds_made if (a, b) == j or (b, a) == j]) + 1
             # Check that a bond exists between these atoms in the adjacency matrix
             if self.adj_mat[a, b] != 1:
                 raise AtomTypesException("ERROR in find_lewis: fixed_bonds requests bond creation between \
@@ -824,41 +901,47 @@ class AtomType(AtomTypesBaseOperation):
                     "Warning in find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds) \
                     but atom {} only has {} lone electrons.".format(a, b, N, self.elements[b], lone_electrons[b]))
 
-
             # Make the bonds between the atoms
-            for j in range(N-N_current):
+            for j in range(N - N_current):
                 bonding_electrons[a] += 1
                 bonding_electrons[b] += 1
-                lone_electrons[a]    -= 1
-                lone_electrons[b]    -= 1
-                bonds_made += [ (a,b) ]
+                lone_electrons[a] -= 1
+                lone_electrons[b] -= 1
+                bonds_made += [(a, b)]
 
             # Append bond to off_limits group so that further bond additions/breaks do not occur.
-            off_limits += [(a,b),(b,a)]
+            off_limits += [(a, b), (b, a)]
 
         # Turn the off_limits list into a set for rapid lookup
         off_limits = set(off_limits)
 
         # Adjust formal charges (if supplied)
         if fc_0 is not None:
-            for count_i,i in enumerate(fc_0):
+            for count_i, i in enumerate(fc_0):
                 if i > 0:
-                    #if lone_electrons[count_i] < i:
-                        #print "ERROR in find_lewis: atom ({}, index {}) doesn't have enough lone electrons ({}) to be removed to satisfy the specified formal charge ({}).".format(elements[count_i],count_i,lone_electrons[count_i],i)
-                        #quit()
+                    # if lone_electrons[count_i] < i:
+                    # print "ERROR in find_lewis: atom ({}, index {}) doesn't have enough lone electrons ({}) to be removed to satisfy the specified formal charge ({}).".format(elements[count_i],count_i,lone_electrons[count_i],i)
+                    # quit()
                     lone_electrons[count_i] = lone_electrons[count_i] - i
                 if i < 0:
                     lone_electrons[count_i] = lone_electrons[count_i] + int(abs(i))
-            q_tot=0
+            q_tot = 0
 
         # diagnostic print
         if verbose is True:
             print("Starting electronic structure:")
-            print("\n{:40s} {:20} {:20} {:20} {:20} {}".format("elements","lone_electrons","bonding_electrons","core_electrons","formal_charge","bonded_atoms"))
-            for count_i,i in enumerate(self.elements):
-                print("{:40s} {:<20d} {:<20d} {:<20d} {:<20d} {}".format(self.elements[count_i],lone_electrons[count_i],bonding_electrons[count_i],core_electrons[count_i],\
-                                                                         valence_list[count_i] - bonding_electrons[count_i] - lone_electrons[count_i],\
-                                                                         ",".join([ "{}".format(count_j) for count_j,j in enumerate(adj_mat[count_i]) if j == 1 ])))
+            print("\n{:40s} {:20} {:20} {:20} {:20} {}".format("elements", "lone_electrons", "bonding_electrons",
+                                                               "core_electrons", "formal_charge", "bonded_atoms"))
+            for count_i, i in enumerate(self.elements):
+                print(
+                    "{:40s} {:<20d} {:<20d} {:<20d} {:<20d} {}".format(self.elements[count_i], lone_electrons[count_i],
+                                                                       bonding_electrons[count_i],
+                                                                       core_electrons[count_i], \
+                                                                       valence_list[count_i] - bonding_electrons[
+                                                                           count_i] - lone_electrons[count_i], \
+                                                                       ",".join(["{}".format(count_j) for count_j, j in
+                                                                                 enumerate(adj_mat[count_i]) if
+                                                                                 j == 1])))
 
         # Initialize objects for use in the algorithm
         lewis_total = 1000
@@ -872,50 +955,52 @@ class AtomType(AtomTypesBaseOperation):
         lewis_identical_mat = []
 
         # Determine the atoms with lone pairs that are unsatisfied as candidates for electron removal/addition to satisfy the total charge condition
-        happy = [ i[0] for i in bonding_pref if i[1] <= bonding_electrons[i[0]]]
+        happy = [i[0] for i in bonding_pref if i[1] <= bonding_electrons[i[0]]]
         bonding_pref_ind = [i[0] for i in bonding_pref]
 
         # Determine is electrons need to be removed or added
         if q_tot > 0:
             adjust = -1
             octet_violate_e = []
-            for count_j,j in enumerate(self.elements):
-                if j.lower() in ["c","n","o","f","si","p","s","cl"] and count_j not in bonding_pref_ind:
-                    if bonding_electrons[count_j]*2 + lone_electrons[count_j] > 8:
+            for count_j, j in enumerate(self.elements):
+                if j.lower() in ["c", "n", "o", "f", "si", "p", "s", "cl"] and count_j not in bonding_pref_ind:
+                    if bonding_electrons[count_j] * 2 + lone_electrons[count_j] > 8:
                         octet_violate_e += [count_j]
-                elif j.lower() in ["br","i"] and count_j not in bonding_pref_ind:
-                    if bonding_electrons[count_j]*2 + lone_electrons[count_j] > 18:
+                elif j.lower() in ["br", "i"] and count_j not in bonding_pref_ind:
+                    if bonding_electrons[count_j] * 2 + lone_electrons[count_j] > 18:
                         octet_violate_e += [count_j]
 
-            normal_adjust = [ count_i for count_i,i in enumerate(lone_electrons) if i > 0 and count_i not in happy and count_i not in octet_violate_e]
+            normal_adjust = [count_i for count_i, i in enumerate(lone_electrons) if
+                             i > 0 and count_i not in happy and count_i not in octet_violate_e]
 
         elif q_tot < 0:
             adjust = 1
             octet_violate_e = []
-            for count_j,j in enumerate(self.elements):
-                if j.lower() in ["c","n","o","f","si","p","s","cl"] and count_j not in bonding_pref_ind:
-                    if bonding_electrons[count_j]*2 + lone_electrons[count_j] < 8:
+            for count_j, j in enumerate(self.elements):
+                if j.lower() in ["c", "n", "o", "f", "si", "p", "s", "cl"] and count_j not in bonding_pref_ind:
+                    if bonding_electrons[count_j] * 2 + lone_electrons[count_j] < 8:
                         octet_violate_e += [count_j]
 
-                elif j.lower() in ["br","i"] and count_j not in bonding_pref_ind:
-                    if bonding_electrons[count_j]*2 + lone_electrons[count_j] < 18:
+                elif j.lower() in ["br", "i"] and count_j not in bonding_pref_ind:
+                    if bonding_electrons[count_j] * 2 + lone_electrons[count_j] < 18:
                         octet_violate_e += [count_j]
 
-            normal_adjust = [ count_i for count_i,i in enumerate(lone_electrons) if i > 0 and count_i not in happy and count_i not in octet_violate_e]
+            normal_adjust = [count_i for count_i, i in enumerate(lone_electrons) if
+                             i > 0 and count_i not in happy and count_i not in octet_violate_e]
 
         else:
             adjust = 1
             octet_violate_e = []
-            normal_adjust = [ count_i for count_i,i in enumerate(lone_electrons) if i > 0 and count_i not in happy ]
+            normal_adjust = [count_i for count_i, i in enumerate(lone_electrons) if i > 0 and count_i not in happy]
 
         # The outer loop checks each bonding structure produced by the inner loop for consistency with
         # the user specified "pref_bonding" and pref_argument with bonding electrons are
         for dummy_counter in range(lewis_total):
             lewis_loop_list = loop_list
             random.shuffle(lewis_loop_list)
-            outer_counter     = 0
-            inner_max_cycles  = 1000
-            outer_max_cycles  = 1000
+            outer_counter = 0
+            inner_max_cycles = 1000
+            outer_max_cycles = 1000
             bond_sat = False
 
             lewis_lone_electrons.append(deepcopy(lone_electrons))
@@ -931,7 +1016,7 @@ class AtomType(AtomTypesBaseOperation):
             # The algorithm simply adds/removes from the first N lone pairs that are discovered
             random.shuffle(octet_violate_e)
             random.shuffle(normal_adjust)
-            adjust_ind=octet_violate_e+normal_adjust
+            adjust_ind = octet_violate_e + normal_adjust
 
             if len(adjust_ind) >= abs(q_tot):
                 for i in range(abs(q_tot)):
@@ -946,7 +1031,7 @@ class AtomType(AtomTypesBaseOperation):
             while bond_sat is False:
 
                 # Initialize necessary objects
-                change_list   = range(len(lewis_lone_electrons[lewis_counter]))
+                change_list = range(len(lewis_lone_electrons[lewis_counter]))
                 inner_counter = 0
                 bond_sat = True
                 # Inner loop forms bonds to remove radicals or underbonded atoms until no further
@@ -956,7 +1041,7 @@ class AtomType(AtomTypesBaseOperation):
                     for i in lewis_loop_list:
 
                         # List of atoms that already have a satisfactory binding configuration.
-                        happy = [ j[0] for j in bonding_pref if j[1] <= lewis_bonding_electrons[lewis_counter][j[0]]]
+                        happy = [j[0] for j in bonding_pref if j[1] <= lewis_bonding_electrons[lewis_counter][j[0]]]
 
                         # If the current atom already has its target configuration then no further action is taken
                         if i in happy: continue
@@ -965,19 +1050,30 @@ class AtomType(AtomTypesBaseOperation):
                         if lewis_lone_electrons[lewis_counter][i] == 0: continue
 
                         # Take action if this atom has a radical or an unsatifisied bonding condition
-                        if lewis_lone_electrons[lewis_counter][i] % 2 != 0 or lewis_bonding_electrons[lewis_counter][i] != lewis_bonding_target[lewis_counter][i]:
+                        if lewis_lone_electrons[lewis_counter][i] % 2 != 0 or lewis_bonding_electrons[lewis_counter][
+                            i] != lewis_bonding_target[lewis_counter][i]:
                             # Try to form a bond with a neighboring radical (valence +1/-1 check ensures that no improper 5-bonded atoms are formed)
-                            lewis_bonded_radicals = [ (-find_lewis.en[self.elements[count_j].lower()],count_j) for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and lewis_lone_electrons[lewis_counter][count_j] % 2 != 0 \
-                                                      and 2*(lewis_bonding_electrons[lewis_counter][count_j]+1)+(lewis_lone_electrons[lewis_counter][count_j]-1) <= lewis_valence[lewis_counter][count_j]\
-                                                      and lewis_lone_electrons[lewis_counter][count_j]-1 >= 0 and count_j not in happy ]
+                            lewis_bonded_radicals = [(-find_lewis_dict.en[self.elements[count_j].lower()], count_j) for
+                                                     count_j, j in enumerate(self.adj_mat[i]) if
+                                                     j == 1 and lewis_lone_electrons[lewis_counter][count_j] % 2 != 0 \
+                                                     and 2 * (lewis_bonding_electrons[lewis_counter][count_j] + 1) + (
+                                                                 lewis_lone_electrons[lewis_counter][count_j] - 1) <=
+                                                     lewis_valence[lewis_counter][count_j] \
+                                                     and lewis_lone_electrons[lewis_counter][
+                                                         count_j] - 1 >= 0 and count_j not in happy]
 
-                            lewis_bonded_lonepairs= [ (-find_lewis.en[self.elements[count_j].lower()],count_j) for count_j,j in enumerate(self.adj_mat[i]) if j == 1 and lewis_lone_electrons[lewis_counter][count_j] > 0 \
-                                                      and 2*(lewis_bonding_electrons[lewis_counter][count_j]+1)+(lewis_lone_electrons[lewis_counter][count_j]-1) <= lewis_valence[lewis_counter][count_j] and lewis_lone_electrons[lewis_counter][count_j]-1 >= 0 \
-                                                      and count_j not in happy ]
+                            lewis_bonded_lonepairs = [(-find_lewis_dict.en[self.elements[count_j].lower()], count_j) for
+                                                      count_j, j in enumerate(self.adj_mat[i]) if
+                                                      j == 1 and lewis_lone_electrons[lewis_counter][count_j] > 0 \
+                                                      and 2 * (lewis_bonding_electrons[lewis_counter][count_j] + 1) + (
+                                                                  lewis_lone_electrons[lewis_counter][count_j] - 1) <=
+                                                      lewis_valence[lewis_counter][count_j] and
+                                                      lewis_lone_electrons[lewis_counter][count_j] - 1 >= 0 \
+                                                      and count_j not in happy]
 
                             # Sort by atomic number (cheap way of sorting carbon before other atoms, should probably switch over to electronegativities)
-                            lewis_bonded_radicals  = [ j[1] for j in sorted(lewis_bonded_radicals) ]
-                            lewis_bonded_lonepairs = [ j[1] for j in sorted(lewis_bonded_lonepairs) ]
+                            lewis_bonded_radicals = [j[1] for j in sorted(lewis_bonded_radicals)]
+                            lewis_bonded_lonepairs = [j[1] for j in sorted(lewis_bonded_lonepairs)]
 
                             # Correcting radicals is attempted first
                             if len(lewis_bonded_radicals) > 0:
@@ -987,8 +1083,8 @@ class AtomType(AtomTypesBaseOperation):
                                 lewis_adj_mat[lewis_counter][lewis_bonded_radicals[0]][i] += 1
                                 lewis_lone_electrons[lewis_counter][i] -= 1
                                 lewis_lone_electrons[lewis_counter][lewis_bonded_radicals[0]] -= 1
-                                change_list += [i,lewis_bonded_radicals[0]]
-                                lewis_bonds_made[lewis_counter] += [(i,lewis_bonded_radicals[0])]
+                                change_list += [i, lewis_bonded_radicals[0]]
+                                lewis_bonds_made[lewis_counter] += [(i, lewis_bonded_radicals[0])]
 
                             # Else try to form a bond with a neighboring atom with spare lone electrons (valence check ensures that no improper 5-bonded atoms are formed)
                             elif len(lewis_bonded_lonepairs) > 0:
@@ -998,28 +1094,32 @@ class AtomType(AtomTypesBaseOperation):
                                 lewis_adj_mat[lewis_counter][lewis_bonded_lonepairs[0]][i] += 1
                                 lewis_lone_electrons[lewis_counter][i] -= 1
                                 lewis_lone_electrons[lewis_counter][lewis_bonded_lonepairs[0]] -= 1
-                                change_list += [i,lewis_bonded_lonepairs[0]]
-                                lewis_bonds_made[lewis_counter] += [(i,lewis_bonded_lonepairs[0])]
-                                #lewis_bonds_en[lewis_counter] += 1.0/find_lewis.en[elements[i].lower()]/find_lewis.en[elements[lewis_bonded_lonepairs[0]].lower()]
+                                change_list += [i, lewis_bonded_lonepairs[0]]
+                                lewis_bonds_made[lewis_counter] += [(i, lewis_bonded_lonepairs[0])]
+                                # lewis_bonds_en[lewis_counter] += 1.0/find_lewis.en[elements[i].lower()]/find_lewis.en[elements[lewis_bonded_lonepairs[0]].lower()]
 
                     # Increment the counter and break if the maximum number of attempts have been made
                     inner_counter += 1
                     if inner_counter >= inner_max_cycles:
-                        print("WARNING: maximum attempts to establish a reasonable lewis-structure exceeded ({}).".format(inner_max_cycles))
+                        print(
+                            "WARNING: maximum attempts to establish a reasonable lewis-structure exceeded ({}).".format(
+                                inner_max_cycles))
 
                 # Check if the user specified preferred bond order has been achieved.
                 if bonding_pref is not None:
-                    unhappy = [ i[0] for i in bonding_pref if i[1] != lewis_bonding_electrons[lewis_counter][i[0]]]
+                    unhappy = [i[0] for i in bonding_pref if i[1] != lewis_bonding_electrons[lewis_counter][i[0]]]
                     if len(unhappy) > 0:
 
                         # Break the first bond involving one of the atoms bonded to the under/over coordinated atoms
-                        ind = set([unhappy[0]] + [ count_i for count_i,i in enumerate(self.adj_mat[unhappy[0]]) if i == 1 and (count_i,unhappy[0]) not in off_limits ])
+                        ind = set([unhappy[0]] + [count_i for count_i, i in enumerate(self.adj_mat[unhappy[0]]) if
+                                                  i == 1 and (count_i, unhappy[0]) not in off_limits])
 
                         # Check if a rearrangment is possible, break if none are available
                         try:
-                            break_bond = next( i for i in lewis_bonds_made[lewis_counter] if i[0] in ind or i[1] in ind )
+                            break_bond = next(i for i in lewis_bonds_made[lewis_counter] if i[0] in ind or i[1] in ind)
                         except:
-                            print("WARNING: no further bond rearrangments are possible and bonding_pref is still not satisfied.")
+                            print(
+                                "WARNING: no further bond rearrangments are possible and bonding_pref is still not satisfied.")
                             break
 
                         # Perform bond rearrangment
@@ -1034,7 +1134,7 @@ class AtomType(AtomTypesBaseOperation):
                         lewis_bonds_made[lewis_counter].remove(break_bond)
                         lewis_loop_list.remove(break_bond[0])
                         lewis_loop_list.remove(break_bond[1])
-                        lewis_loop_list += [break_bond[0],break_bond[1]]
+                        lewis_loop_list += [break_bond[0], break_bond[1]]
 
                         # Update the bond_sat flag
                         bond_sat = False
@@ -1044,12 +1144,13 @@ class AtomType(AtomTypesBaseOperation):
 
                     # Periodically reorder the list to avoid some cyclical walks
                     if outer_counter % 100 == 0:
-                        lewis_loop_list = self.reorder_list(lewis_loop_list,atomic_number)
+                        lewis_loop_list = self.reorder_list(lewis_loop_list, atomic_number)
 
                     # Print diagnostic upon failure
                     if outer_counter >= outer_max_cycles:
                         print("WARNING: maximum attempts to establish a lewis-structure consistent")
-                        print("         with the user supplied bonding preference has been exceeded ({}).".format(outer_max_cycles))
+                        print("         with the user supplied bonding preference has been exceeded ({}).".format(
+                            outer_max_cycles))
                         break
 
             # Re-apply keep_lone: remove one electron from such index
@@ -1057,36 +1158,37 @@ class AtomType(AtomTypesBaseOperation):
                 lewis_lone_electrons[lewis_counter][count_i] -= 1
 
             # Special cases, share pair of electrons
-            total_electron=np.array(lewis_lone_electrons[lewis_counter])+np.array(lewis_bonding_electrons[lewis_counter])*2
+            total_electron = np.array(lewis_lone_electrons[lewis_counter]) + np.array(
+                lewis_bonding_electrons[lewis_counter]) * 2
 
             # count for atom which doesn't satisfy
             # Notice: need systematical check for this part !!!
-            unsatisfy = [count_t for count_t,te in enumerate(total_electron) if te > 2 and te < 8 and te % 2 ==0]
+            unsatisfy = [count_t for count_t, te in enumerate(total_electron) if te > 2 and te < 8 and te % 2 == 0]
             for uns in unsatisfy:
-                full_connect=[count_i for count_i,i in enumerate(self.adj_mat[uns]) if i == 1
-                              and total_electron[count_i] == 8 and lewis_lone_electrons[lewis_counter][count_i] >= 2]
+                full_connect = [count_i for count_i, i in enumerate(self.adj_mat[uns]) if i == 1
+                                and total_electron[count_i] == 8 and lewis_lone_electrons[lewis_counter][count_i] >= 2]
                 if len(full_connect) > 0:
-
-                    lewis_lone_electrons[lewis_counter][full_connect[0]]-=2
-                    lewis_bonding_electrons[lewis_counter][uns]+=1
-                    lewis_bonding_electrons[lewis_counter][full_connect[0]]+=1
-                    lewis_adj_mat[lewis_counter][uns][full_connect[0]]+=1
-                    lewis_adj_mat[lewis_counter][full_connect[0]][uns]+=1
+                    lewis_lone_electrons[lewis_counter][full_connect[0]] -= 2
+                    lewis_bonding_electrons[lewis_counter][uns] += 1
+                    lewis_bonding_electrons[lewis_counter][full_connect[0]] += 1
+                    lewis_adj_mat[lewis_counter][uns][full_connect[0]] += 1
+                    lewis_adj_mat[lewis_counter][full_connect[0]][uns] += 1
 
             # Delete last entry in the lewis np.arrays if the electronic structure is not unique: introduce identical_mat includes both info of bond_mats and formal_charges
-            identical_mat=np.vstack([lewis_adj_mat[-1], np.array([ valence_list[k] - lewis_bonding_electrons[-1][k]
-                                                                   - lewis_lone_electrons[-1][k] for k in range(len(self.elements)) ]) ])
+            identical_mat = np.vstack([lewis_adj_mat[-1], np.array([valence_list[k] - lewis_bonding_electrons[-1][k]
+                                                                    - lewis_lone_electrons[-1][k] for k in
+                                                                    range(len(self.elements))])])
             lewis_identical_mat.append(identical_mat)
 
-            if self.array_unique(lewis_identical_mat[-1],lewis_identical_mat[:-1]) is False :
-                lewis_lone_electrons    = lewis_lone_electrons[:-1]
+            if self.array_unique(lewis_identical_mat[-1], lewis_identical_mat[:-1]) is False:
+                lewis_lone_electrons = lewis_lone_electrons[:-1]
                 lewis_bonding_electrons = lewis_bonding_electrons[:-1]
-                lewis_core_electrons    = lewis_core_electrons[:-1]
-                lewis_valence           = lewis_valence[:-1]
-                lewis_bonding_target    = lewis_bonding_target[:-1]
-                lewis_bonds_made        = lewis_bonds_made[:-1]
-                lewis_adj_mat           = lewis_adj_mat[:-1]
-                lewis_identical_mat     = lewis_identical_mat[:-1]
+                lewis_core_electrons = lewis_core_electrons[:-1]
+                lewis_valence = lewis_valence[:-1]
+                lewis_bonding_target = lewis_bonding_target[:-1]
+                lewis_bonds_made = lewis_bonds_made[:-1]
+                lewis_adj_mat = lewis_adj_mat[:-1]
+                lewis_identical_mat = lewis_identical_mat[:-1]
 
         # Find the total number of lone electrons in each structure
         lone_electrons_sums = []
@@ -1098,22 +1200,26 @@ class AtomType(AtomTypesBaseOperation):
         for i in range(len(lewis_lone_electrons)):
             ov = 0
             if octet_opt is True:
-                for count_j,j in enumerate(self.elements):
-                    if j.lower() in ["c","n","o","f","si","p","s","cl","br","i"] and count_j not in bonding_pref_ind:
-                        if (lewis_bonding_electrons[i][count_j]*2 + lewis_lone_electrons[i][count_j] != 8
-                                and lewis_bonding_electrons[i][count_j]*2 + lewis_lone_electrons[i][count_j] != 18):
+                for count_j, j in enumerate(self.elements):
+                    if j.lower() in ["c", "n", "o", "f", "si", "p", "s", "cl", "br",
+                                     "i"] and count_j not in bonding_pref_ind:
+                        if (lewis_bonding_electrons[i][count_j] * 2 + lewis_lone_electrons[i][count_j] != 8
+                                and lewis_bonding_electrons[i][count_j] * 2 + lewis_lone_electrons[i][count_j] != 18):
                             ov += 1
             octet_violations.append(ov)
 
         ## Calculate bonding energy
         lewis_bonds_energy = []
         for bonds_made in lewis_bonds_made:
-            for lb,bond_made in enumerate(bonds_made): bonds_made[lb]=tuple(sorted(bond_made))
-            count_bonds_made = ["{}-{}-{}".format(min(atomic_number[bm[0]],atomic_number[bm[1]]),
-                                                  max(atomic_number[bm[0]],atomic_number[bm[1]]),bonds_made.count(bm) ) for bm in set(bonds_made)]
-            lewis_bonds_energy += [sum([find_lewis.be[cbm] if cbm in find_lewis.be.keys() else -10000.0 for cbm in count_bonds_made  ]) ]
+            for lb, bond_made in enumerate(bonds_made): bonds_made[lb] = tuple(sorted(bond_made))
+            count_bonds_made = ["{}-{}-{}".format(min(atomic_number[bm[0]], atomic_number[bm[1]]),
+                                                  max(atomic_number[bm[0]], atomic_number[bm[1]]), bonds_made.count(bm))
+                                for bm in set(bonds_made)]
+            lewis_bonds_energy += [
+                sum([find_lewis_dict.be[cbm] if cbm in find_lewis_dict.be.keys() else -10000.0 for cbm in
+                     count_bonds_made])]
         # normalize the effect
-        lewis_bonds_energy = [-be/max(1,max(lewis_bonds_energy)) for be in lewis_bonds_energy]
+        lewis_bonds_energy = [-be / max(1, max(lewis_bonds_energy)) for be in lewis_bonds_energy]
 
         ## Find the total formal charge for each structure
         formal_charges_sums = []
@@ -1124,55 +1230,63 @@ class AtomType(AtomTypesBaseOperation):
             formal_charges_sums.append(fc)
 
         ## Find formal charge eletronegativity contribution
-        lewis_formal_charge = [ [ valence_list[i] - lewis_bonding_electrons[_][i] - lewis_lone_electrons[_][i] for i in range(len(self.elements)) ] for _ in range(len(lewis_lone_electrons)) ]
-        lewis_keep_lone     = [ [ count_i for count_i,i in enumerate(lone) if i % 2 != 0] for lone in lewis_lone_electrons]
+        lewis_formal_charge = [[valence_list[i] - lewis_bonding_electrons[_][i] - lewis_lone_electrons[_][i] for i in
+                                range(len(self.elements))] for _ in range(len(lewis_lone_electrons))]
+        lewis_keep_lone = [[count_i for count_i, i in enumerate(lone) if i % 2 != 0] for lone in lewis_lone_electrons]
         lewis_fc_en = []  # Electronegativity for stabling charge/radical
-        lewis_fc_pol = [] # Polarizability for stabling charge/radical
-        lewis_fc_hc  = [] # Hyper-conjugation contribution
+        lewis_fc_pol = []  # Polarizability for stabling charge/radical
+        lewis_fc_hc = []  # Hyper-conjugation contribution
         for i in range(len(lewis_lone_electrons)):
             formal_charge = lewis_formal_charge[i]
             radical_atom = lewis_keep_lone[i]
-            fc_ind = [(count_j,j) for count_j,j in enumerate(formal_charge) if j != 0]
+            fc_ind = [(count_j, j) for count_j, j in enumerate(formal_charge) if j != 0]
             for R_ind in radical_atom:  # assign +0.5 for radical
-                fc_ind += [(R_ind,0.5)]
+                fc_ind += [(R_ind, 0.5)]
 
             # initialize en,pol and hc
-            fc_en,fc_pol,fc_hc = 0,0,0
+            fc_en, fc_pol, fc_hc = 0, 0, 0
 
             # Loop over formal charges and radicals
             for count_fc in fc_ind:
                 ind = count_fc[0]
                 charge = count_fc[1]
                 # Count the self contribution: (-) on the most electronegative atom and (+) on the least electronegative atom
-                fc_en += 10 * charge * find_lewis.en[self.elements[ind].lower()]
+                fc_en += 10 * charge * find_lewis_dict.en[self.elements[ind].lower()]
 
                 # Find the nearest and next-nearest atoms for each formal_charge/radical contained atom
                 gs = self.AdjMat.graph_seps()
-                nearest_atoms = [count_k for count_k,k in enumerate(lewis_adj_mat[i][ind]) if k >= 1]
-                NN_atoms = list(set([ count_j for count_j,j in enumerate(gs[ind]) if j == 2 ]))
+                nearest_atoms = [count_k for count_k, k in enumerate(lewis_adj_mat[i][ind]) if k >= 1]
+                NN_atoms = list(set([count_j for count_j, j in enumerate(gs[ind]) if j == 2]))
 
                 # only count when en > en(C)
-                fc_en += charge*(sum([find_lewis.en[self.elements[count_k].lower()] for count_k in nearest_atoms if find_lewis.en[self.elements[count_k].lower()] > 2.54] )+\
-                                 sum([find_lewis.en[self.elements[count_k].lower()] for count_k in NN_atoms if find_lewis.en[self.elements[count_k].lower()] > 2.54] ) * 0.1 )
+                fc_en += charge * (
+                            sum([find_lewis_dict.en[self.elements[count_k].lower()] for count_k in nearest_atoms if
+                                 find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) + \
+                            sum([find_lewis_dict.en[self.elements[count_k].lower()] for count_k in NN_atoms if
+                                 find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) * 0.1)
 
-                if charge < 0: # Polarizability only affects negative charge
-                    fc_pol += charge*sum([find_lewis.pol[self.elements[count_k].lower()] for count_k in nearest_atoms ])
+                if charge < 0:  # Polarizability only affects negative charge
+                    fc_pol += charge * sum(
+                        [find_lewis_dict.pol[self.elements[count_k].lower()] for count_k in nearest_atoms])
 
                 # find hyper-conjugation strcuture
-                nearby_carbon = [nind for nind in nearest_atoms if self.elements[nind].lower()=='c']
+                nearby_carbon = [nind for nind in nearest_atoms if self.elements[nind].lower() == 'c']
                 for carbon_ind in nearby_carbon:
-                    carbon_nearby=[nind for nind in NN_atoms if lewis_adj_mat[i][carbon_ind][nind] >= 1 and self.elements[nind].lower() in ['c','h']]
-                    if len(carbon_nearby) == 3: fc_hc -= charge*(len([nind for nind in carbon_nearby
-                                                                      if self.elements[nind].lower() == 'c'])*2
-                                                                 + len([nind for nind in carbon_nearby if self.elements[nind].lower() == 'h']))
+                    carbon_nearby = [nind for nind in NN_atoms if
+                                     lewis_adj_mat[i][carbon_ind][nind] >= 1 and self.elements[nind].lower() in ['c',
+                                                                                                                 'h']]
+                    if len(carbon_nearby) == 3: fc_hc -= charge * (len([nind for nind in carbon_nearby
+                                                                        if self.elements[nind].lower() == 'c']) * 2
+                                                                   + len(
+                                [nind for nind in carbon_nearby if self.elements[nind].lower() == 'h']))
 
             lewis_fc_en.append(fc_en)
             lewis_fc_pol.append(fc_pol)
             lewis_fc_hc.append(fc_hc)
 
         # normalize the effect
-        lewis_fc_en = [lfc/max(1,max(abs(np.array(lewis_fc_en)))) for lfc in lewis_fc_en]
-        lewis_fc_pol= [lfp/max(1,max(abs(np.array(lewis_fc_pol)))) for lfp in lewis_fc_pol]
+        lewis_fc_en = [lfc / max(1, max(abs(np.array(lewis_fc_en)))) for lfc in lewis_fc_en]
+        lewis_fc_pol = [lfp / max(1, max(abs(np.array(lewis_fc_pol)))) for lfp in lewis_fc_pol]
 
         # Add the total number of radicals to the total formal charge to determine the criteria.
         # The radical count is scaled by 0.01 and the lone pair count is scaled by 0.001. This results
@@ -1181,19 +1295,21 @@ class AtomType(AtomTypesBaseOperation):
         # the lone pair count. The structure(s) with the lowest score will be returned.
         lewis_criteria = []
         for i in range(len(lewis_lone_electrons)):
-            #lewis_criteria.append( 10.0*octet_violations[i] + abs(formal_charges_sums[i]) +
+            # lewis_criteria.append( 10.0*octet_violations[i] + abs(formal_charges_sums[i]) +
             # 0.1*sum([ 1 for j in lewis_lone_electrons[i] if j % 2 != 0 ]) + 0.001*lewis_bonds_energy[i]
             # + 0.00001*lewis_fc_en[i] + 0.000001*lewis_fc_pol[i] + 0.0000001*lewis_fc_hc[i])
-            lewis_criteria.append( 10.0*octet_violations[i] + abs(formal_charges_sums[i]) +
-                                   0.1*sum([ 1 for j in lewis_lone_electrons[i] if j % 2 != 0 ]) + 0.01*lewis_fc_en[i] + 0.005*lewis_fc_pol[i] +\
-                                   0.0001*lewis_fc_hc[i] + 0.0001*lewis_bonds_energy[i])
-        best_lewis = [i[0] for i in sorted(enumerate(lewis_criteria), key=lambda x:x[1])]  # sort from least to most and return a list containing the origial list's indices in the correct order
-        best_lewis = [ i for i in best_lewis if lewis_criteria[i] == lewis_criteria[best_lewis[0]] ]
+            lewis_criteria.append(10.0 * octet_violations[i] + abs(formal_charges_sums[i]) +
+                                  0.1 * sum([1 for j in lewis_lone_electrons[i] if j % 2 != 0]) + 0.01 * lewis_fc_en[
+                                      i] + 0.005 * lewis_fc_pol[i] + \
+                                  0.0001 * lewis_fc_hc[i] + 0.0001 * lewis_bonds_energy[i])
+        best_lewis = [i[0] for i in sorted(enumerate(lewis_criteria), key=lambda x: x[
+            1])]  # sort from least to most and return a list containing the origial list's indices in the correct order
+        best_lewis = [i for i in best_lewis if lewis_criteria[i] == lewis_criteria[best_lewis[0]]]
 
         # Finally check formal charge to keep those with
-        lewis_re_fc     = [ lewis_formal_charge[_]+lewis_keep_lone[_] for _ in best_lewis]
-        appear_times    = [ lewis_re_fc.count(i) for i in lewis_re_fc]
-        best_lewis      = [best_lewis[i] for i in range(len(lewis_re_fc)) if appear_times[i] == max(appear_times) ]
+        lewis_re_fc = [lewis_formal_charge[_] + lewis_keep_lone[_] for _ in best_lewis]
+        appear_times = [lewis_re_fc.count(i) for i in lewis_re_fc]
+        best_lewis = [best_lewis[i] for i in range(len(lewis_re_fc)) if appear_times[i] == max(appear_times)]
 
         # Apply keep_lone information, remove the electron to form lone electron
         for i in best_lewis:
@@ -1206,94 +1322,88 @@ class AtomType(AtomTypesBaseOperation):
                 print("Bonding Matrix  {}".format(i))
                 print("Formal_charge:  {}".format(formal_charges_sums[i]))
                 print("Lewis_criteria: {}\n".format(lewis_criteria[i]))
-                print("{:<40s} {:<40s} {:<15s} {:<15s}".format("Elements","Bond_Mat","Lone_Electrons","FC"))
+                print("{:<40s} {:<40s} {:<15s} {:<15s}".format("Elements", "Bond_Mat", "Lone_Electrons", "FC"))
                 for j in range(len(self.elements)):
-                    print("{:<40s} {}    {} {}".format(self.elements[j]," ".join([ str(k) for k in lewis_adj_mat[i][j] ]),lewis_lone_electrons[i][j],valence_list[j] - lewis_bonding_electrons[i][j] - lewis_lone_electrons[i][j]))
-                print (" ")
+                    print(
+                        "{:<40s} {}    {} {}".format(self.elements[j], " ".join([str(k) for k in lewis_adj_mat[i][j]]),
+                                                     lewis_lone_electrons[i][j],
+                                                     valence_list[j] - lewis_bonding_electrons[i][j] -
+                                                     lewis_lone_electrons[i][j]))
+                print(" ")
 
         # If only the bonding matrix is requested, then only that is returned
         if b_mat_only is True:
             if return_FC is False:
-                return [ lewis_adj_mat[_] for _ in best_lewis ]
+                return [lewis_adj_mat[_] for _ in best_lewis]
             else:
-                return [ lewis_adj_mat[_] for _ in best_lewis ], [ lewis_formal_charge[_] for _ in best_lewis ]
+                return [lewis_adj_mat[_] for _ in best_lewis], [lewis_formal_charge[_] for _ in best_lewis]
 
         # return like check_lewis function
         if check_lewis_flag is True:
             if return_pref is True:
-                return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], lewis_core_electrons[best_lewis[0]],bonding_pref
+                return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], \
+                lewis_core_electrons[best_lewis[0]], bonding_pref
             else:
-                return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], lewis_core_electrons[best_lewis[0]]
+                return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], \
+                lewis_core_electrons[best_lewis[0]]
 
         # Optional bonding pref return to handle cases with special groups
         if return_pref is True:
             if return_FC is False:
-                return [ lewis_lone_electrons[_] for _ in best_lewis ],[ lewis_bonding_electrons[_] for _ in best_lewis ],\
-                       [ lewis_core_electrons[_] for _ in best_lewis ],[ lewis_adj_mat[_] for _ in best_lewis ],bonding_pref
+                return [lewis_lone_electrons[_] for _ in best_lewis], [lewis_bonding_electrons[_] for _ in best_lewis], \
+                    [lewis_core_electrons[_] for _ in best_lewis], [lewis_adj_mat[_] for _ in best_lewis], bonding_pref
             else:
-                return [ lewis_lone_electrons[_] for _ in best_lewis ],[ lewis_bonding_electrons[_] for _ in best_lewis ],\
-                       [ lewis_core_electrons[_] for _ in best_lewis ],[ lewis_adj_mat[_] for _ in best_lewis ],[ lewis_formal_charge[_] for _ in best_lewis ],bonding_pref
+                return [lewis_lone_electrons[_] for _ in best_lewis], [lewis_bonding_electrons[_] for _ in best_lewis], \
+                    [lewis_core_electrons[_] for _ in best_lewis], [lewis_adj_mat[_] for _ in best_lewis], [
+                    lewis_formal_charge[_] for _ in best_lewis], bonding_pref
 
         else:
             if return_FC is False:
-                return [ lewis_lone_electrons[_] for _ in best_lewis ],[ lewis_bonding_electrons[_] for _ in best_lewis ],\
-                       [ lewis_core_electrons[_] for _ in best_lewis ],[ lewis_adj_mat[_] for _ in best_lewis ]
+                return [lewis_lone_electrons[_] for _ in best_lewis], [lewis_bonding_electrons[_] for _ in best_lewis], \
+                    [lewis_core_electrons[_] for _ in best_lewis], [lewis_adj_mat[_] for _ in best_lewis]
             else:
-                return [ lewis_lone_electrons[_] for _ in best_lewis ],[ lewis_bonding_electrons[_] for _ in best_lewis ],\
-                       [ lewis_core_electrons[_] for _ in best_lewis ],[ lewis_adj_mat[_] for _ in best_lewis ],[ lewis_formal_charge[_] for _ in best_lewis ]
+                return [lewis_lone_electrons[_] for _ in best_lewis], [lewis_bonding_electrons[_] for _ in best_lewis], \
+                    [lewis_core_electrons[_] for _ in best_lewis], [lewis_adj_mat[_] for _ in best_lewis], [
+                    lewis_formal_charge[_] for _ in best_lewis]
 
     def frag_find_lewis(self, bonding_pref=[], fixed_bonds=[], q_tot=0, fc_0=None, keep_lone=[],
                         return_pref=False, return_FC=False, octet_opt=True, check_lewis_flag=False):
         """
-        # This function is used to deal with fragments. frag_find_lewis will just form double/triple bonds based on given fc/keep_lone information rather than generate fc/keep_lone.
-        #
-        # Inputs:  elements:  a list of element labels indexed to the adj_mat
-        #          adj_mat:   np.array of atomic connections
-        #          bonding_pref: optional list of (index, bond_number) tuples that sets the target bond number of the indexed atoms
-        #          q_tot:     total charge on the molecule
-        #          fixed_bonds: optional list of (index_1,index_2,bond_number) tuples that creates fixed bonds between the index_1
-        #                       and index_2 atoms. No further bonds will be added or subtracted between these atoms.
-        #
-        # Optional inputs for ion and radical cases:
-        #          fc_0:      a list of formal charges on each atom
-        #          keep_lone: a list of atom index for which contains a radical
-        #
-        # Returns: lone_electrons:
-        #          bonding_electrons:
-        #          core_electrons:
-        #          bond_mat:  an NxN matrix holding the bond orders between all atoms in the adj_mat
-        #          bonding_pref (optinal): optional list of (index, bond_number) tuples that sets the target bond number of the indexed atoms
-        #
+        This function is used to deal with fragments. frag_find_lewis will just form double/triple bonds based on given fc/keep_lone information rather than generate fc/keep_lone.
+
+        :param bonding_pref: optional list of (index, bond_number) tuples that sets the target bond number of the indexed atoms
+        :param q_tot:     total charge on the molecule
+        :param fixed_bonds: optional list of (index_1,index_2,bond_number) tuples that creates fixed bonds between the index_1
+                               and index_2 atoms. No further bonds will be added or subtracted between these atoms.
+        :param fc_0:      a list of formal charges on each atom
+        :param keep_lone: a list of atom index for which contains a radical
+
+        :returns: lone_electrons:
+                  bonding_electrons:
+                  core_electrons:
+                  bond_mat:  an NxN matrix holding the bond orders between all atoms in the adj_mat
+                  bonding_pref (optinal): optional list of (index, bond_number) tuples that sets the target bond number of the indexed atoms
+
         """
-
-        # Initialize the preferred lone electron dictionary the first time this function is called
-        if not hasattr(frag_find_lewis, "sat_dict"):
-            frag_find_lewis.lone_e = Tables.LONE_ELETRON
-
-            # Initialize periodic table
-            frag_find_lewis.periodic = Tables.PERIODICT
-
-            # Electronegativity ordering (for determining lewis structure)
-            frag_find_lewis.en = Tables.ELETRONEGATIVITY
-
-            # Polarizability ordering (for determining lewis structure)
-            frag_find_lewis.pol = Tables.POLARIZABILITY
-
-            frag_find_lewis.be = Tables.BOND_ENERGY
-
-            # Initialize periodic table
-            frag_find_lewis.atomic_to_element = {frag_find_lewis.periodic[i]: i for i in
-                                                 frag_find_lewis.periodic.keys()}
+        frag_find_lewis_dict = SimpleNamespace()
+        frag_find_lewis_dict.lone_e = Tables.LONE_ELETRON
+        frag_find_lewis_dict.periodic = Tables.PERIODICT
+        frag_find_lewis_dict.en = Tables.ELETRONEGATIVITY
+        frag_find_lewis_dict.pol = Tables.POLARIZABILITY
+        frag_find_lewis_dict.be = Tables.BOND_ENERGY
+        frag_find_lewis_dict.atomic_to_element = {frag_find_lewis_dict.periodic[i]: i for i in
+                                                  frag_find_lewis_dict.periodic.keys()}
 
         # Consistency check on fc_0 argument, if supplied
         if fc_0 is not None:
             if len(fc_0) != len(self.elements):
-                raise AtomTypesException("ERROR in frag_find_lewis: the fc_0 and elements lists must have the same dimensions.")
+                raise AtomTypesException(
+                    "ERROR in frag_find_lewis: the fc_0 and elements lists must have the same dimensions.")
             if int(sum(fc_0)) != int(q_tot):
                 raise AtomTypesException("ERROR in frag_find_lewis: the sum of formal charges does not equal q_tot.")
 
         # Initalize elementa and atomic_number lists for use by the function
-        atomic_number = [frag_find_lewis.periodic[i.lower()] for i in self.elements]
+        atomic_number = [frag_find_lewis_dict.periodic[i.lower()] for i in self.elements]
         adj_mat = deepcopy(self.adj_mat)
 
         # Initially assign all valence electrons as lone electrons
@@ -1337,7 +1447,7 @@ class AtomType(AtomTypesBaseOperation):
             if count_i in [j[0] for j in bonding_pref]:
                 bonding_target[count_i] = next(j[1] for j in bonding_pref if j[0] == count_i)
             else:
-                bonding_target[count_i] = N_tot - frag_find_lewis.lone_e[self.elements[count_i].lower()]
+                bonding_target[count_i] = N_tot - frag_find_lewis_dict.lone_e[self.elements[count_i].lower()]
 
                 # Loop over the adjmat and assign initial bonded electrons assuming single bonds (and adjust lone electrons accordingly)
         for count_i, i in enumerate(self.adj_mat):
@@ -1489,19 +1599,21 @@ class AtomType(AtomTypesBaseOperation):
 
             # Check that less than or an equal number of bonds exist between these atoms than is requested
             if N_current > N:
-                raise AtomTypesException("ERROR in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds) but {} bonds already exist between these atoms. There may be a conflict between the special groups handling and the requested lewis_structure.".format(
+                raise AtomTypesException(
+                    "ERROR in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds) but {} bonds already exist between these atoms. There may be a conflict between the special groups handling and the requested lewis_structure.".format(
                         a, b, N, N_current))
 
             # Check that enough lone electrons exists on each atom to reach the target bond number
             if lone_electrons[a] < (N - N_current):
-                print("Warning in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds)  but atom {} only has {} lone electrons.".format(
+                print(
+                    "Warning in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds)  but atom {} only has {} lone electrons.".format(
                         a, b, N, self.elements[a], lone_electrons[a]))
 
             # Check that enough lone electrons exists on each atom to reach the target bond number
             if lone_electrons[b] < (N - N_current):
-                print("Warning in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds) but atom {} only has {} lone electrons.".format(
+                print(
+                    "Warning in frag_find_lewis: fixed_bonds requests bond creation between atoms {} and {} ({} bonds) but atom {} only has {} lone electrons.".format(
                         a, b, N, self.elements[b], lone_electrons[b]))
-
 
             # Make the bonds between the atoms
             for j in range(N - N_current):
@@ -1639,14 +1751,15 @@ class AtomType(AtomTypesBaseOperation):
                         if lewis_lone_electrons[lewis_counter][i] % 2 != 0 or lewis_bonding_electrons[lewis_counter][
                             i] != lewis_bonding_target[lewis_counter][i]:
                             # Try to form a bond with a neighboring radical (valence +1/-1 check ensures that no improper 5-bonded atoms are formed)
-                            lewis_bonded_lonepairs = [(-frag_find_lewis.en[self.elements[count_j].lower()], count_j) for
-                                                      count_j, j in enumerate(self.adj_mat[i]) if
-                                                      j == 1 and lewis_lone_electrons[lewis_counter][count_j] > 0 \
-                                                      and 2 * (lewis_bonding_electrons[lewis_counter][count_j] + 1) + (
-                                                                  lewis_lone_electrons[lewis_counter][count_j] - 1) <=
-                                                      lewis_valence[lewis_counter][count_j] and \
-                                                      lewis_lone_electrons[lewis_counter][
-                                                          count_j] - 1 >= 0 and count_j not in happy]
+                            lewis_bonded_lonepairs = [
+                                (-frag_find_lewis_dict.en[self.elements[count_j].lower()], count_j) for
+                                count_j, j in enumerate(self.adj_mat[i]) if
+                                j == 1 and lewis_lone_electrons[lewis_counter][count_j] > 0 \
+                                and 2 * (lewis_bonding_electrons[lewis_counter][count_j] + 1) + (
+                                        lewis_lone_electrons[lewis_counter][count_j] - 1) <=
+                                lewis_valence[lewis_counter][count_j] and \
+                                lewis_lone_electrons[lewis_counter][
+                                    count_j] - 1 >= 0 and count_j not in happy]
 
                             # Sort by atomic number (cheap way of sorting carbon before other atoms, should probably switch over to electronegativities)
                             lewis_bonded_lonepairs = [j[1] for j in sorted(lewis_bonded_lonepairs)]
@@ -1665,7 +1778,8 @@ class AtomType(AtomTypesBaseOperation):
                     # Increment the counter and break if the maximum number of attempts have been made
                     inner_counter += 1
                     if inner_counter >= inner_max_cycles:
-                        print("WARNING: maximum attempts to establish a reasonable lewis-structure exceeded ({}).".format(
+                        print(
+                            "WARNING: maximum attempts to establish a reasonable lewis-structure exceeded ({}).".format(
                                 inner_max_cycles))
 
                 # Check if the user specified preferred bond order has been achieved.
@@ -1678,8 +1792,8 @@ class AtomType(AtomTypesBaseOperation):
                                                   i == 1 and (count_i, unhappy[0]) not in off_limits])
 
                         potential_bond = [i for i in lewis_bonds_made[lewis_counter] if (
-                                    (i[0] in ind or i[1] in ind) and (
-                                        i[0] not in bonding_pref_ind or i[1] not in bonding_pref_ind))]
+                                (i[0] in ind or i[1] in ind) and (
+                                i[0] not in bonding_pref_ind or i[1] not in bonding_pref_ind))]
                         if len(potential_bond) == 0:
                             potential_bond = [i for i in lewis_bonds_made[lewis_counter] if i[0] in ind or i[1] in ind]
 
@@ -1687,7 +1801,8 @@ class AtomType(AtomTypesBaseOperation):
                         try:
                             break_bond = next(i for i in potential_bond)
                         except:
-                            print("WARNING: no further bond rearrangments are possible and bonding_pref is still not satisfied.")
+                            print(
+                                "WARNING: no further bond rearrangments are possible and bonding_pref is still not satisfied.")
                             break
 
                         # Perform bond rearrangment
@@ -1716,7 +1831,9 @@ class AtomType(AtomTypesBaseOperation):
 
                     # Print diagnostic upon failure
                     if outer_counter >= outer_max_cycles:
-                        print("WARNING: maximum attempts to establish a lewis-structure consistent with the user supplied bonding preference has been exceeded ({}).".format(outer_max_cycles))
+                        print(
+                            "WARNING: maximum attempts to establish a lewis-structure consistent with the user supplied bonding preference has been exceeded ({}).".format(
+                                outer_max_cycles))
                         break
 
             # Re-apply keep_lone: remove one electron from such index
@@ -1792,7 +1909,7 @@ class AtomType(AtomTypesBaseOperation):
                 charge = count_fc[1]
 
                 # Count the self contribution: (-) on the most electronegative atom and (+) on the least electronegative atom
-                fc_en += 10 * charge * frag_find_lewis.en[self.elements[ind].lower()]
+                fc_en += 10 * charge * frag_find_lewis_dict.en[self.elements[ind].lower()]
 
                 # Find the nearest and next-nearest atoms for each formal_charge/radical contained atom
                 gs = self.graph_seps()
@@ -1800,25 +1917,27 @@ class AtomType(AtomTypesBaseOperation):
                 NN_atoms = list(set([count_j for count_j, j in enumerate(gs[ind]) if j == 2]))
 
                 # only count en > en(C)
-                fc_en += charge * (sum([frag_find_lewis.en[self.elements[count_k].lower()] for count_k in nearest_atoms if
-                                        frag_find_lewis.en[self.elements[count_k].lower()] > 2.54]) + \
-                                   sum([frag_find_lewis.en[self.elements[count_k].lower()] for count_k in NN_atoms if
-                                        frag_find_lewis.en[self.elements[count_k].lower()] > 2.54]) * 0.1)
+                fc_en += charge * (
+                            sum([frag_find_lewis_dict.en[self.elements[count_k].lower()] for count_k in nearest_atoms if
+                                 frag_find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) + \
+                            sum([frag_find_lewis_dict.en[self.elements[count_k].lower()] for count_k in NN_atoms if
+                                 frag_find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) * 0.1)
 
                 if charge < 0:  # Polarizability only affects negative charge ?
                     fc_pol += charge * sum(
-                        [frag_find_lewis.pol[self.elements[count_k].lower()] for count_k in nearest_atoms])
+                        [frag_find_lewis_dict.pol[self.elements[count_k].lower()] for count_k in nearest_atoms])
 
                 # find hyper-conjugation strcuture
                 nearby_carbon = [nind for nind in nearest_atoms if self.elements[nind].lower() == 'c']
                 for carbon_ind in nearby_carbon:
                     carbon_nearby = [nind for nind in NN_atoms if
-                                     lewis_adj_mat[i][carbon_ind][nind] >= 1 and self.elements[nind].lower() in ['c', 'h']]
+                                     lewis_adj_mat[i][carbon_ind][nind] >= 1 and self.elements[nind].lower() in ['c',
+                                                                                                                 'h']]
                     radical_on_carbon = lewis_lone_electrons[i][carbon_ind]
                     if (len(carbon_nearby) + radical_on_carbon) == 3: fc_hc -= charge * (
-                                len([nind for nind in carbon_nearby if self.elements[nind].lower() == 'c']) * 2 + \
-                                len([nind for nind in carbon_nearby if
-                                     self.elements[nind].lower() == 'h']) + radical_on_carbon)
+                            len([nind for nind in carbon_nearby if self.elements[nind].lower() == 'c']) * 2 + \
+                            len([nind for nind in carbon_nearby if
+                                 self.elements[nind].lower() == 'h']) + radical_on_carbon)
 
             lewis_fc_en.append(fc_en)
             lewis_fc_pol.append(fc_pol)
@@ -1832,7 +1951,7 @@ class AtomType(AtomTypesBaseOperation):
         # finding all such pairs, count it in lewis critria.
         mass_dict = Tables.MASSDICT
         masses = [mass_dict[i] for i in self.elements]
-        hash_list = [ self.atom_hash(ind, masses) for ind in range(len(self.elements))]
+        hash_list = [self.atom_hash(ind, masses) for ind in range(len(self.elements))]
 
         # Find identical atoms
         same_atoms = [(i, [count_j for count_j, j in enumerate(hash_list) if j == i]) for i in set(hash_list) if
@@ -1852,7 +1971,8 @@ class AtomType(AtomTypesBaseOperation):
         res_pair_score = []
         for pair_list in res_atoms:
             pair = pair_list[0]
-            center_atom = [ind for ind, i in enumerate(self.adj_mat[pair[0]]) if i == 1 and self.adj_mat[pair[1]][ind] == 1][
+            center_atom = \
+            [ind for ind, i in enumerate(self.adj_mat[pair[0]]) if i == 1 and self.adj_mat[pair[1]][ind] == 1][
                 0]
             res_pair += [tuple(sorted((pair[0], center_atom))), tuple(sorted((pair[1], center_atom)))]
             res_pair_score += [pair_list[1], pair_list[1]]
@@ -1877,8 +1997,8 @@ class AtomType(AtomTypesBaseOperation):
                 bond_type = "{}-{}-{}".format(min(atomic_number[bond_made[0]], atomic_number[bond_made[1]]),
                                               max(atomic_number[bond_made[0]], atomic_number[bond_made[1]]),
                                               bonds_made.count(bond_made))
-                if bond_type in frag_find_lewis.be.keys():
-                    bonds_energy += factor * frag_find_lewis.be[bond_type]
+                if bond_type in frag_find_lewis_dict.be.keys():
+                    bonds_energy += factor * frag_find_lewis_dict.be[bond_type]
                 else:
                     bonds_energy -= factor * (-10000.0)
             lewis_bonds_energy += [bonds_energy]
@@ -1911,10 +2031,10 @@ class AtomType(AtomTypesBaseOperation):
         if check_lewis_flag is True:
             if return_pref is True:
                 return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], \
-                lewis_core_electrons[best_lewis[0]], bonding_pref
+                    lewis_core_electrons[best_lewis[0]], bonding_pref
             else:
                 return lewis_lone_electrons[best_lewis[0]], lewis_bonding_electrons[best_lewis[0]], \
-                lewis_core_electrons[best_lewis[0]]
+                    lewis_core_electrons[best_lewis[0]]
 
         # Optional bonding pref return to handle cases with special groups
         if return_pref is True:
@@ -1936,3 +2056,12 @@ class AtomType(AtomTypesBaseOperation):
                     [lewis_core_electrons[_] for _ in best_lewis], [lewis_adj_mat[_] for _ in best_lewis], \
                     [[valence_list[i] - lewis_bonding_electrons[_][i] - lewis_lone_electrons[_][i] for i in
                       range(len(self.elements))] for _ in best_lewis]
+
+def main(argv):
+    test = AtomType(2)
+    test.elements = ['O','S']
+    print(test.elements)
+    print(test._AdjMat.elements)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -1,5 +1,5 @@
 from utilities.parse import xyz_parse
-from Excpetions import TAFFIException
+from utilities.Excpetions import TAFFIException
 
 class StructureException(TAFFIException):
     pass
@@ -16,7 +16,6 @@ class StructureBase:
         # keeping the xyz name is useful for debugging
         self.xyz = None
 
-    # base class needs to be protected
     @property
     def elements(self):
         if self._elements is not None:
@@ -47,6 +46,14 @@ class StructureBase:
         self._q_tot = value
 
     def parse_from_xyz(self, xyz, q_opt=False):
+        """
+        call static call to parse the value to members
+
+        :param xyz: xyz name
+        :type xyz: str
+        :param q_opt: whether to pass charge in the xyz file or not
+        :type q_opt: bool
+        """
         self.xyz = xyz
         if q_opt:
             self.elements, self.geometry, self.q_tot = xyz_parse(xyz, q_opt=q_opt)
@@ -54,15 +61,12 @@ class StructureBase:
             self.elements, self.geometry = xyz_parse(xyz, q_opt=q_opt)
 
     def parse_data(self, **kwargs):
-        elements = kwargs.get('elements', None)
-        geometry = kwargs.get('geometry', None)
-        q_tot = kwargs.get('q_tot', None)
-        if elements is not None:
-            self.elements = elements
-        if geometry is not None:
-            self.geometry = geometry
-        if q_tot is not None:
-            self.q_tot = q_tot
+        attributes = ['elements', 'geometry', 'q_tot']
+
+        for attribute in attributes:
+            value = kwargs.get(attribute, None)
+            if value is not None:
+                setattr(self, attribute, value)
 
 def main():
     struc = StructureBase()

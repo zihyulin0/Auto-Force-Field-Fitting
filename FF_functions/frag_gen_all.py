@@ -1,6 +1,4 @@
-#!/bin/env python                                                                                                                                                             
 # Author: Brett Savoie (brettsavoie@gmail.com)
-
 import sys, argparse, os, json, codecs
 import numpy as np
 from copy import deepcopy
@@ -10,12 +8,13 @@ from utilities.transify import transify
 from utilities.util import GetInchi, find_files
 from utilities.writers import write_xyz, write_modelist
 from utilities.parse import parse_FF_params
-from model.molecule import canon_dihedral
-from model.molecule import Molecule
-
+from model.molecule import Molecule, canon_dihedral
 
 class FragGenAllException(TAFFIException):
     pass
+
+DEFAULT_DICT = {'xyz': '', 'ff': '', 'xyz_avoid': '', 'outputname': 'frags', 'gens': 2, 'recursive_opt': False,
+                'q_tot': 0, 'keep_terminal': False, 'avoid_frags_opt': False}
 
 def main(argv):
     parser = argparse.ArgumentParser(
@@ -24,35 +23,33 @@ def main(argv):
                     'inchi-key, and the generated file, dependency.txt, contains the dependency graph.')
 
     # required (positional) arguments
-    parser.add_argument('coord_files', dest='xyz',
+    parser.add_argument('xyz',
                         help='Space delimited string holding the names of the .xyz input geometries of one or several '
                              'molecules in need of parametrization. Wildcards are supported. ')
 
-    DEFAULT = ''
-    parser.add_argument('-FF', dest='ff', default=DEFAULT,
+    parser.add_argument('-FF', dest='ff', default=DEFAULT_DICT['ff'],
                         help='This variable holds the filename(s) of the .db files holding existing force-field '
-                             'parameters to be avoided in the fragment generation (default: {}})'.format(DEFAULT))
+                             'parameters to be avoided in the fragment generation (default: {}))'.format(
+                            DEFAULT_DICT['ff']))
 
-    DEFAULT = ''
-    parser.add_argument('-xyz_avoid', dest='xyz_avoid', default=DEFAULT,
+    parser.add_argument('-xyz_avoid', dest='xyz_avoid', default=DEFAULT_DICT['xyz_avoid'],
                         help='This variable holds the space-delimited filename(s) of xyz files. Any atomtypes for '
                              'which these xyz files are canonical parametrization fragments for are avoided when '
-                             'generating fragments (default: {})'.format(DEFAULT))
+                             'generating fragments (default: {})'.format(DEFAULT_DICT['xyz_avoid']))
 
-    DEFAULT = 'frags'
-    parser.add_argument('-o', dest='outputname', default=DEFAULT,
-                        help='Controls the output folder name for the fragments. (default: {}})'.format(DEFAULT))
+    parser.add_argument('-o', dest='outputname', default=DEFAULT_DICT['outputname'],
+                        help='Controls the output folder name for the fragments. (default: {}))'.format(
+                            DEFAULT_DICT['outputname']))
 
-    DEFAULT = 2
-    parser.add_argument('-gens', type=int, dest='gens', default=DEFAULT,
-                        help='Controls the bond search depth for identifying unique atom types (default: {})'.format(DEFAULT))
+    parser.add_argument('-gens', type=int, dest='gens', default=DEFAULT_DICT['gens'],
+                        help='Controls the bond search depth for identifying unique atom types (default: {})'.format(
+                            DEFAULT_DICT['gens']))
 
     parser.add_argument('-R', dest='recursive_opt', default=False, action='store_const', const=True,
                         help='When this flag is present, filenames and wildcards will be searched for recursively.')
 
-    DEFAULT = 0
-    parser.add_argument('-q', type=int, dest='q_tot', default=0,
-                        help='The total charge on the generated fragments. (default: {})'.format(DEFAULT))
+    parser.add_argument('-q', type=int, dest='q_tot', default=DEFAULT_DICT['q_tot'],
+                        help='The total charge on the generated fragments. (default: {})'.format(DEFAULT_DICT['q_tot']))
 
     parser.add_argument('--keep_terminal', dest='keep_terminal_opt', default=False, action='store_const', const=True,
                         help='When this flag is present, terminal atoms at the edges of fragments are retained. Default is to perform a full hydrogenation consistent with the hybridization of the atomtype. (default: off)')
@@ -64,32 +61,29 @@ def main(argv):
     args = parser.parse_args(argv)
 
     sys.stdout = Logger()
-    print("PROGRAM CALL: python {}\n".format(' '.join([i for i in sys.argv[1:]])))
+    print("PROGRAM CALL: python {}\n".format(' '.join([i for i in sys.argv])))
 
-    args.xyz = args.xyz.split()
-    args.xyz_avoid = args.xyz_avoid.split()
+    # transform to dictionary
     args_dict = vars(args)
 
     # Generate the model compounds
-    return run(args_dict)
+    try:
+        out_dict = run(**args_dict)
+        return out_dict
+    # only print out the error msg in log and try to catch this when it's being executed as "python frag_gen_all.py"
+    except FragGenAllException as e:
+        print(e)
 
-
-def run(config):
-    # Find files
-    config['xyz'] = find_files(config['xyz'], recursive=config['recursive_opt'])
-
-    # Perform some consistency checks
-    if False in [i.split('.')[-1] == 'xyz' for i in config['xyz']]:
-        raise FragGenAllException("ERROR: Check to ensure that the input file(s) are in .xyz format.")
-    if False in [os.path.isfile(i) for i in config['xyz']]:
-        raise FragGenAllException("ERROR: Could not find file {}. Exiting...".format(
-            next([i for i in config['xyz'] if not os.path.isfile(i)])))
-    for i in config['ff']:
-        if os.path.isfile(i) == False:
-            raise FragGenAllException("ERROR: FF file {} couldn't not be found. Exiting...".format(i))
-    for i in config['xyz_avoid']:
-        if os.path.isfile(i) == False:
-            raise FragGenAllException("ERROR: xyz_avoid file {} couldn't not be found. Exiting...".format(i))
+def run(**kwargs):
+    """
+    main driver function why it is set up this way using **kwargs is that if frag_gen_all.py is called directly by
+    shell (or submitted to node either way), then it can be used as python frag_gen_all.py -ff ,,, -avoid_xyz ... -q
+    as it is but when this is being called within other .py file, it'll be called as run(ff=...,,avoid_xyz=...,
+    q_tot=...), which imo is prettier than run({'ff':..., 'avoid_xyz':.., 'q_tot':...})
+    """
+    config = build_config_from_kwargs(kwargs)
+    process_and_check_options(config)
+    quit() # temporary
 
     # Generate a dictionary of the various modes contained in the supplied database files
     FF_db, modes_from_FF = parse_FF_params(config['ff'])
@@ -102,16 +96,18 @@ def run(config):
 
     # Map redundant model compounds, write mode files associated with each model compound,
     # and write the transified geometries to dedicated folders (based on inchi key).
-    geo_dict_out = generate_final(config, mc_dict, mode_instances, instance_types)
+    geo_dict_out = generate_final(mc_dict, mode_instances, instance_types)
 
     # Does anything actually use this? If not, then remove and simplify generate_final. 7/17/20
     return geo_dict_out
 
 
 def model_compound_generator(config, FF_db):
-
     """
-    recursively generates model compounds for all modes present in config['xyz'] but not in the supplied force-field files (FF_db). A new model compound is generated for each mode that is discovered. This potentially results in many equivalent model compounds being generated, however redundant models are later removed by the generate_final function.
+    recursively generates model compounds for all modes present in config['xyz'] but not in the supplied force-field
+    files (FF_db). A new model compound is generated for each mode that is discovered. This potentially results in
+    many equivalent model compounds being generated, however redundant models are later removed by the generate_final
+    function.
 
     :param config: user option configuration
     :type config: dict
@@ -152,7 +148,7 @@ def model_compound_generator(config, FF_db):
     # Initialize geo_dict with the supplied coord_file information
     for count_i, i in enumerate(config["xyz"]):
         geo_dict[count_i] = Molecule(config['gens'])
-        geo_dict[count_i].get_atom_types_pipe(i, method='complicate')
+        geo_dict[count_i].get_atom_types_from_xyz_pipe(i, method='complicate')
 
     # Find atom types in need of parameterization
     # TODO Another headache of using depth 2 angles and dihedrals is that we have to generate model compounds for the atom types first
@@ -170,7 +166,7 @@ def model_compound_generator(config, FF_db):
         # Generate their model compounds and propagate the information to the atom/bond/angle/dihedral lists
         # mc_dict holds the model compound information and gets updated by the helper function. 
         # For atoms
-        for count_j, j in enumerate(geo_dict[i]["atom_types"]):
+        for count_j, j in enumerate(geo_dict[i].atom_types):
             if j not in atom_types:
                 # Generate model
                 update_mc_dict([count_j], j, geo_dict, mc_dict, config, geo_keys, i, atoms, atom_types, atom_keys)
@@ -227,8 +223,7 @@ def model_compound_generator(config, FF_db):
     for i in geo_keys:
 
         # Find modes (returns all modes in canonicalized format)
-        (bonds_tmp, angles_tmp, dihedrals_tmp, one_fives_tmp, bond_types_tmp, angle_types_tmp, dihedral_types_tmp,
-         one_five_types_tmp) = geo_dict[i].find_modes(return_all=1)
+        geo_dict[i].find_modes(return_all=1)
 
         # Find first instance of each atom and mode in need of parameterization
         # Generate their model compounds and propagate the information to the atom/bond/angle/dihedral lists
@@ -241,24 +236,24 @@ def model_compound_generator(config, FF_db):
                 update_mc_dict([count_j], j, geo_dict, mc_dict, config, geo_keys, i, atoms, atom_types, atom_keys)
 
         # For bonds
-        for count_j, j in enumerate(bond_types_tmp):
+        for count_j, j in enumerate(geo_dict[i].bond_types):
             if j not in bond_types and j not in FF_db["bonds"]:
                 # Generate model
-                update_mc_dict(bonds_tmp[count_j], j, geo_dict, mc_dict, config, geo_keys, i, bonds, bond_types,
+                update_mc_dict(geo_dict[i].bonds[count_j], j, geo_dict, mc_dict, config, geo_keys, i, bonds, bond_types,
                                bond_keys)
 
         # For angles
-        for count_j, j in enumerate(angle_types_tmp):
+        for count_j, j in enumerate(geo_dict[i].angle_types):
             if j not in angle_types and j not in FF_db["angles"]:
                 # Generate model
-                update_mc_dict(angles_tmp[count_j], j, geo_dict, mc_dict, config, geo_keys, i, angles, angle_types,
+                update_mc_dict(geo_dict[i].angles[count_j], j, geo_dict, mc_dict, config, geo_keys, i, angles, angle_types,
                                angle_keys)
 
         # For dihedrals
-        for count_j, j in enumerate(dihedral_types_tmp):
+        for count_j, j in enumerate(geo_dict[i].dihedral_types):
             if j not in dihedral_types and j not in FF_db["dihedrals"]:
                 # Generate model
-                update_mc_dict(dihedrals_tmp[count_j], j, geo_dict, mc_dict, config, geo_keys, i, dihedrals,
+                update_mc_dict(geo_dict[i].dihedrals[count_j], j, geo_dict, mc_dict, config, geo_keys, i, dihedrals,
                                dihedral_types, dihedral_keys)
 
         # Remove the current compound after all of its model compounds have been generated and added to mc_dict
@@ -406,7 +401,7 @@ def assign_generations(mc_dict, mode_instances):
     return
 
 
-def generate_final(config, mc_dict, mode_instances, instance_types):
+def generate_final(mc_dict, mode_instances, instance_types):
     """
     # Description: this function handles mapping redundant model compounds, writing the mode files, and outputting
     #              the json dictionary. Mapping is necessary because a model compound is generated for every mode
@@ -450,7 +445,7 @@ def generate_final(config, mc_dict, mode_instances, instance_types):
                 # Note: map_frag does the heavy lifting of mapping the atom indices in j to i (graph isomorphism problem!) the idea is that multiple modes use the same model compound
                 # so only one is subjected to explicit calculations, but the distinct atomtypes for fitting each mode are retained in teh *.modes file.
                 match_idx += [j]
-                mc_dict[j]["atom_types"], mapping, status = map_frag(mc_dict[i], mc_dict[j])
+                mc_dict[j].atom_types, mapping, status = map_frag(mc_dict[i], mc_dict[j])
                 mode_instances = [(m[0], m[1], tuple([mapping[k] for k in m[2]])) if m[0] == j else m for m in
                                   mode_instances]
 
@@ -464,6 +459,7 @@ def generate_final(config, mc_dict, mode_instances, instance_types):
                 run_list += [j]
 
         # Generate inchi key for this model compound
+        # TODO transify would probably be changed to a method in class later
         opt_geo = transify(mc_dict[i].geometry, mc_dict[i].adj_mat, elements=mc_dict[i].elements,
                            opt_terminals=True, opt_final=True)
         inchikey = GetInchi(mc_dict[i].elements, opt_geo)
@@ -583,7 +579,7 @@ def parse_avoided_types(xyz_avoid, gens):
     for file in xyz_avoid:
 
         mol = Molecule(gens)
-        mol.get_atom_types_pipe(file, method='simple')
+        mol.get_atom_types_from_xyz_pipe(file, method='simple')
 
         for types in set(mol.atom_types):
 
@@ -644,7 +640,7 @@ def update_mc_dict(M, M_type, geo_dict, mc_dict, config, geo_keys, current, M_li
         mc_dict[mc_id].mc_prop["dep_types"] = set([j.replace("link-", "") for j in mc_dict[mc_id].atom_types if
                                                    minimal_structure(j, mc_dict[mc_id]) is False])
     else:
-        mc_dict[mc_id].mc_prop["dep_types"] = set([j.replace("link-", "") for j in mc_dict[mc_id]["atom_types"]])
+        mc_dict[mc_id].mc_prop["dep_types"] = set([j.replace("link-", "") for j in mc_dict[mc_id].atom_types])
     return
 
 
@@ -767,7 +763,7 @@ def mode_frag(M, molecule, fc=[], keep_lone=[],
 
         # Include the atoms in the mode and connected atoms within the preserve list.
     preserve = []
-    gs = N_molecule.AdjMat.graph_seps()
+    gs = N_molecule.graph_seps
     for i in loop_list:
         preserve += [count_i for count_i, i in enumerate(gs[i]) if i < molecule.gens]
     preserve = set(preserve)
@@ -777,12 +773,12 @@ def mode_frag(M, molecule, fc=[], keep_lone=[],
 
     # Update the link types
     tmp_atom_types = deepcopy(N_molecule.atom_types)
-    N_molecule.AtomType.atom_types += ['link-' + tmp_atom_types[i] for i in added_idx]
+    N_molecule.atom_types += ['link-' + tmp_atom_types[i] for i in added_idx]
 
     # Canonicalize by sorting the elements based on hashing (NOTE: range(len(N_atom_types)) is used here rather than "atoms" as in the keep_terminal is True option. 
     Masses = [mode_frag.mass_dict[N_molecule.elements[i]] for i in range(len(N_molecule.atom_types))]
     hash_list, atoms = [list(j) for j in zip(*sorted(
-        [(N_molecule.AtomType.atom_hash(count_i, Masses), i) for count_i, i in
+        [(N_molecule.atom_hash(count_i, Masses), i) for count_i, i in
          enumerate(range(len(N_molecule.atom_types)))],
         reverse=True))]
 
@@ -801,7 +797,7 @@ def mode_frag(M, molecule, fc=[], keep_lone=[],
 
     # If keep_types is False then the atomtypes are recalculated here
     if keep_types is False:
-        N_molecule.AtomType.UpdateAtomTypes()
+        N_molecule.UpdateAtomTypes()
 
     return N_M, N_molecule
 
@@ -846,12 +842,13 @@ def add_hydrogens(molecule, preserve=[], saturate=True, retype=True, fixed_bonds
     # lone_electrons,bonding_electrons,core_electrons,bonding_pref = check_lewis(atomtypes,adj_mat,q_tot=q_tot,bonding_pref=bonding_pref,return_pref=True,fixed_bonds=fixed_bonds)
     # since the input doesn't contain fc infor yet, set fc all be zero
     fc = [0] * len(elements)
-    lone_electrons, bonding_electrons, core_electrons, bonding_pref = molecule.AtomType.frag_find_lewis(q_tot=molecule.q_tot,
-                                                                                      fc_0=fc, keep_lone=[],
-                                                                                      fixed_bonds=fixed_bonds,
-                                                                                      bonding_pref=bonding_pref,
-                                                                                      return_pref=True,
-                                                                                      check_lewis_flag=True)
+    lone_electrons, bonding_electrons, core_electrons, bonding_pref = molecule.frag_find_lewis(
+        q_tot=molecule.q_tot,
+        fc_0=fc, keep_lone=[],
+        fixed_bonds=fixed_bonds,
+        bonding_pref=bonding_pref,
+        return_pref=True,
+        check_lewis_flag=True)
 
     # Update the preserved atoms (check_lewis will extend this list if there are special groups (e.g., nitro moieties) that need to be conserved for the sake of the lewis structure)
     preserve = set([i[0] for i in bonding_pref])
@@ -996,7 +993,7 @@ def add_hydrogens(molecule, preserve=[], saturate=True, retype=True, fixed_bonds
     N_molecule.parse_data(geometry=geo, atom_types=atomtypes, elements=elements, adj_mat=adj_mat)
 
     if retype is True:
-        N_molecule.AtomType.UpdateAtomTypes()
+        N_molecule.UpdateAtomTypes()
         return N_molecule, range(init_len, len(geo))
     else:
         return N_molecule, range(init_len, len(geo))
@@ -1129,7 +1126,7 @@ def new_mode_geo(m_ind, molecule: Molecule, force_linear=False):
     else:
 
         # Graphical separations are used for determining which atoms and bonds to keep
-        gs = molecule.AdjMat.graph_seps()
+        gs = molecule.graph_seps
         # all atoms within "gens" of the m_ind atoms are kept
         # all bonds within "gens" of the m_ind atoms are kept (i.e. bonds between the "gens" separated atoms are NOT kept
         new_atoms = list(set([count_j for i in m_ind for count_j, j in enumerate(gs[i]) if j <= molecule.gens]))
@@ -1228,8 +1225,8 @@ def map_frag(fixed_molecule, remapped_molecule):
     angles, dihedrals, etc) in the remapped fragment are the same after remapping.
     """
     # The equivalency of the two topologies is based upon the mode types and number each topology possesses
-    bond_types_0, angle_types_0, dihedral_types_0, one_five_types_0 = remapped_molecule.find_modes(return_all=1)[4:]
-    comp_obj = (sorted(bond_types_0), sorted(angle_types_0), sorted(dihedral_types_0))
+    remapped_molecule.find_modes(return_all=1)
+    comp_obj = (sorted(remapped_molecule.bond_types), sorted(remapped_molecule.angle_types), sorted(remapped_molecule.dihedral_types))
 
     # Seed the mapping by placing the first atom in the mappable set onto the first instance
     # of its hash type in the fixed set.
@@ -1270,8 +1267,8 @@ def map_frag(fixed_molecule, remapped_molecule):
     # NOTE: the fixed_bond_mats is used for determining dihedral types
     tmp_mol = Molecule(fixed_molecule.gens)
     tmp_mol.parse_data(adj_mat=fixed_molecule.adj_mat, atom_types=new_atomtypes, bond_mat=fixed_molecule.bond_mat)
-    bond_types_1, angle_types_1, dihedral_types_1, one_five_types_1 = tmp_mol.find_modes(return_all=1)[4:]
-    if comp_obj != (sorted(bond_types_1), sorted(angle_types_1), sorted(dihedral_types_1)):
+    tmp_mol.find_modes(return_all=1)
+    if comp_obj != (sorted(tmp_mol.bond_types), sorted(tmp_mol.angle_types), sorted(tmp_mol.dihedral_types)):
         raise FragGenAllException("ERROR in map_frag: No mapping was discovered that preserved the topology of the "
                                   "original fragment. Check that the two fragments are indeed identical. Exiting...")
         print("{:60s} {:60s}".format("Original", "New"))
@@ -1282,8 +1279,50 @@ def map_frag(fixed_molecule, remapped_molecule):
     return new_atomtypes, mapping, 0
 
 
-# Logger object redirects standard output to a file.
+def build_config_from_kwargs(kwargs):
+    """
+    building config dictionary from kwargs if run is called by main here, then the default should already be parse by
+    parser, meaning the default value is kwargs.get will never be used if run is called within some other .py,
+    then the default will be parse in through the value in kwargs.get argument
+
+    :param kwargs: just typical kwargs from **kwargs
+
+    :returns: configuration dictionary
+    """
+    config = {}
+    for key, value in DEFAULT_DICT.items():
+        config[key] = kwargs.get(key, value)
+
+    return config
+
+
+def process_and_check_options(config):
+    """
+    sanity checks of inputs, change config directly
+    """
+    config['xyz'] = config['xyz'].split()
+    config['xyz_avoid'] = config['xyz_avoid'].split()
+    # Find files
+    config['xyz'] = find_files(config['xyz'], recursive=config['recursive_opt'])
+
+    # Perform some consistency checks
+    if False in [i.split('.')[-1] == 'xyz' for i in config['xyz']]:
+        raise FragGenAllException("ERROR: Check to ensure that the input file(s) are in .xyz format.")
+    file_exist = [os.path.isfile(i) for i in config['xyz']]
+    if False in file_exist:
+        raise FragGenAllException("ERROR: Could not find file {}. Exiting...".format(
+            ' '.join([_ for _ in config['xyz'] if not os.path.isfile(_)])))
+    for i in config['ff']:
+        if os.path.isfile(i) == False:
+            raise FragGenAllException("ERROR: FF file {} couldn't not be found. Exiting...".format(i))
+    for i in config['xyz_avoid']:
+        if os.path.isfile(i) == False:
+            raise FragGenAllException("ERROR: xyz_avoid file {} couldn't not be found. Exiting...".format(i))
+
 class Logger(object):
+    """
+    # Logger object redirects standard output to a file.
+    """
     def __init__(self):
         self.terminal = sys.stdout
         self.log = open("frag_gen_all.log", "w")
@@ -1294,6 +1333,7 @@ class Logger(object):
 
     def flush(self):
         pass
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
