@@ -14,7 +14,7 @@ class test_FFfunctionCall(unittest.TestCase):
         self.assertEqual(lines[-1], 'ERROR: Could not find file 1.xyz 2.xyz. Exiting...')
     def test_function_call(self):
         # exception will be raised if this is a function call
-        frag_gen_all.run(xyz="1.xyz 2.xyz", q_tot=1)
+        frag_gen_all.run(xyz="1.xyz 2.xyz", q=1)
 
 
 

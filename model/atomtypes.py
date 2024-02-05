@@ -3,11 +3,10 @@ from model.structure import StructureBase, StructureException
 from utilities.PeriodictTable import Tables
 from utilities.Excpetions import TAFFIException
 import numpy as np
-import random
+import random, sys
 from copy import deepcopy
 from itertools import chain, combinations
 from types import SimpleNamespace
-import sys
 
 
 class AtomTypesException(TAFFIException):
@@ -68,11 +67,21 @@ class AtomTypesBaseOperation(StructureBase):
     a lot of recursive functions, most of them can't be used without higher level wrapper
     """
 
-    def __init__(self, AdjMat=None):
+    def __init__(self, structure_data={}, AdjMat=None, adj_mat=None):
         super().__init__()
         self._AdjMat = AdjacencyMatrix()
+
         if AdjMat is not None:
             self._AdjMat = AdjMat
+            # this also parse the elements, geometry, q_tot from AdjMat to AtomTypes
+            self.parse_data_from_AdjMat(AdjMat)
+        if adj_mat is not None:
+            self._AdjMat.adj_mat = adj_mat
+        if structure_data != {}:
+            # The sequence of parsing AdjMat first then structure data is important
+            # the structure parsed here will also CHANGE the structure in self._AdjMat
+            self.parse_data(**structure_data)
+
     @property
     def AdjMat(self):
         # this make sure it won't be empty when being called
@@ -85,9 +94,7 @@ class AtomTypesBaseOperation(StructureBase):
         if self._AdjMat is None:
             raise AtomTypesException('AdjMat not set, cannot retrieve its adj_mat')
         return self._AdjMat.adj_mat
-    @adj_mat.setter
-    def adj_mat(self, value):
-        self.adj_mat = value
+
     @property
     def graph_seps(self):
         return self._AdjMat.graph_seps()
@@ -482,15 +489,13 @@ class AtomType(AtomTypesBaseOperation):
     """
     Atom type related operations
     Unlike base, methods here can be used independently
+    TODO: have to check adj_mat changes is always consitent
     """
 
-    def __init__(self, gens: int, structure_data={}, AdjMat=None):
-        super().__init__()
+    def __init__(self, gens: int, structure_data={}, AdjMat=None, adj_mat=None):
+        super().__init__(structure_data=structure_data, AdjMat=AdjMat, adj_mat=adj_mat)
         self.gens = gens
-        if structure_data != {}:
-            self.parse_data(**structure_data)
-        if AdjMat is not None:
-            self.parse_data_from_AdjMat(AdjMat)
+
         try:
             self.atom_types = [0] * len(self.elements)  # place holder
         except StructureException:
@@ -499,15 +504,16 @@ class AtomType(AtomTypesBaseOperation):
     def build_from_typeadj_fun(self, atomtype):
         """
         build elements and adj_mat from type_adj function
+        this would only set elements, adj_mat, so be very careful that if we try to regenerate adj_mat from AdjMat
+        it won't work as it doesn't have geometry info
         """
         adj_mat, self.elements = type_adjmat(atomtype)
-        tmp = AdjacencyMatrix()
-        tmp.adj_mat = adj_mat
-        self.parse_data_from_AdjMat(tmp)
+        self._AdjMat.adj_mat = adj_mat
 
     def UpdateAtomTypes(self, **kwargs):
         self.atom_types = self.id_types(gens=self.gens, **kwargs)
 
+    # TODO I want to make id_types from being directly called, the custom gens is very dangerous
     def id_types(self, gens=2, avoid=[], fc=None, keep_lone=None, return_index=False, algorithm="matrix"):
         """
         identifies the taffi atom types for all elements from an adjacency matrix/list (A) and element identify.
@@ -683,7 +689,7 @@ class AtomType(AtomTypesBaseOperation):
         """
         # keep the ability to place with these tables manually
         find_lewis_dict = SimpleNamespace()
-        find_lewis_dict.lone_e = Tables.LONE_ELETRON
+        find_lewis_dict.lone_e = Tables.LONE_ELECTRON
         find_lewis_dict.periodic = Tables.PERIODICT
         find_lewis_dict.en = Tables.ELETRONEGATIVITY
         find_lewis_dict.pol = Tables.POLARIZABILITY
@@ -936,9 +942,9 @@ class AtomType(AtomTypesBaseOperation):
                 print(
                     "{:40s} {:<20d} {:<20d} {:<20d} {:<20d} {}".format(self.elements[count_i], lone_electrons[count_i],
                                                                        bonding_electrons[count_i],
-                                                                       core_electrons[count_i], \
+                                                                       core_electrons[count_i],
                                                                        valence_list[count_i] - bonding_electrons[
-                                                                           count_i] - lone_electrons[count_i], \
+                                                                           count_i] - lone_electrons[count_i],
                                                                        ",".join(["{}".format(count_j) for count_j, j in
                                                                                  enumerate(adj_mat[count_i]) if
                                                                                  j == 1])))
@@ -1261,7 +1267,7 @@ class AtomType(AtomTypesBaseOperation):
                 # only count when en > en(C)
                 fc_en += charge * (
                             sum([find_lewis_dict.en[self.elements[count_k].lower()] for count_k in nearest_atoms if
-                                 find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) + \
+                                 find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) +
                             sum([find_lewis_dict.en[self.elements[count_k].lower()] for count_k in NN_atoms if
                                  find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) * 0.1)
 
@@ -1386,7 +1392,7 @@ class AtomType(AtomTypesBaseOperation):
 
         """
         frag_find_lewis_dict = SimpleNamespace()
-        frag_find_lewis_dict.lone_e = Tables.LONE_ELETRON
+        frag_find_lewis_dict.lone_e = Tables.LONE_ELECTRON
         frag_find_lewis_dict.periodic = Tables.PERIODICT
         frag_find_lewis_dict.en = Tables.ELETRONEGATIVITY
         frag_find_lewis_dict.pol = Tables.POLARIZABILITY
@@ -1919,7 +1925,7 @@ class AtomType(AtomTypesBaseOperation):
                 # only count en > en(C)
                 fc_en += charge * (
                             sum([frag_find_lewis_dict.en[self.elements[count_k].lower()] for count_k in nearest_atoms if
-                                 frag_find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) + \
+                                 frag_find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) +
                             sum([frag_find_lewis_dict.en[self.elements[count_k].lower()] for count_k in NN_atoms if
                                  frag_find_lewis_dict.en[self.elements[count_k].lower()] > 2.54]) * 0.1)
 
@@ -1935,7 +1941,7 @@ class AtomType(AtomTypesBaseOperation):
                                                                                                                  'h']]
                     radical_on_carbon = lewis_lone_electrons[i][carbon_ind]
                     if (len(carbon_nearby) + radical_on_carbon) == 3: fc_hc -= charge * (
-                            len([nind for nind in carbon_nearby if self.elements[nind].lower() == 'c']) * 2 + \
+                            len([nind for nind in carbon_nearby if self.elements[nind].lower() == 'c']) * 2 +
                             len([nind for nind in carbon_nearby if
                                  self.elements[nind].lower() == 'h']) + radical_on_carbon)
 

@@ -77,7 +77,7 @@ def main(argv):
 def run(**kwargs):
     """
     main driver function why it is set up this way using **kwargs is that if frag_gen_all.py is called directly by
-    shell (or submitted to node either way), then it can be used as python frag_gen_all.py -ff ,,, -avoid_xyz ... -q
+    shell (or submitted to node either way), then it can be used as python frag_gen_all.py -ff ... -avoid_xyz ... -q
     as it is but when this is being called within other .py file, it'll be called as run(ff=...,,avoid_xyz=...,
     q_tot=...), which imo is prettier than run({'ff':..., 'avoid_xyz':.., 'q_tot':...})
     """
