@@ -1,0 +1,1 @@
+python rewrite_pot_wrapper.py fitcharge_14 -0.5 /scratch/bell/lin1209/Drude_0216_23_wB97X/nonpolar/LSDPWZHWYPCBBB-UHFFFAOYSA-N/charges/CHELPG_calcs/configs /scratch/bell/lin1209/Drude_0216_23_wB97X/polar/LSDPWZHWYPCBBB-UHFFFAOYSA-N
