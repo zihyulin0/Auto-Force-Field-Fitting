@@ -1,4 +1,3 @@
-# Author: Brett Savoie (brettsavoie@gmail.com)
 import sys, argparse, os, json, codecs
 import numpy as np
 from copy import deepcopy
